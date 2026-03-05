@@ -1,0 +1,166 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+  background-color: #1a1a2e;
+  color: #eee;
+  display: flex;
+  justify-content: center;
+}
+
+/* ── Number inputs ──────────────────────────────────────────────────────────── */
+
+.maze-input {
+  background: #0d0d22;
+  border: 1px solid #2d3d5a;
+  color: #99bbee;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: monospace;
+  font-size: 14px;
+  outline: none;
+}
+
+.maze-input:focus {
+  border-color: #4477aa;
+}
+
+/* Hide the browser's default spin arrows on number inputs — they look out of
+   place on the dark theme and the arrow-key nudge (via step) still works. */
+.maze-input::-webkit-inner-spin-button,
+.maze-input::-webkit-outer-spin-button {
+  opacity: 0.3;
+}
+
+/* ── Forward button ──────────────────────────────────────────────────────────── */
+/*
+ * Large green button — the "walk" action.
+ * Green = go, which matches the universal traffic-light colour convention.
+ * Larger padding than a typical button because this is designed for kids
+ * who may be on a touch device or who simply need an easy-to-hit target.
+ *
+ * WHY a different class from the turn buttons?
+ *   Visual grouping: green = walk, amber = turn. Students can tell at a glance
+ *   which action each button performs, without reading the label.
+ */
+
+.maze-btn-forward {
+  background: #0d4a1e;
+  color: #55ee88;
+  border: 2px solid #1a7a3a;
+  border-radius: 8px;
+  padding: 10px 32px;
+  font-family: monospace;
+  font-size: 16px;
+  font-weight: bold;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  min-width: 160px;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.maze-btn-forward:hover {
+  background: #145c26;
+  border-color: #22aa55;
+  color: #88ffaa;
+}
+
+.maze-btn-forward:active {
+  background: #072b12;
+}
+
+/* ── Turn buttons (↰ Turn Left / Turn Right ↱) ──────────────────────────────── */
+/*
+ * Amber buttons — the "rotate in place" actions.
+ * Amber = a deliberate choice, like a caution light: "think before you turn."
+ * Same large size as the Forward button so all three buttons feel equally
+ * important and are equally easy to tap.
+ *
+ * WHY two buttons instead of a dropdown or radio pair?
+ *   Buttons are faster to click and make the binary choice (left or right)
+ *   visually obvious. Each button clearly labels its own direction —
+ *   no intermediate selection step needed.
+ */
+
+.maze-btn-turn {
+  background: #3a2200;
+  color: #ffcc44;
+  border: 2px solid #6a4400;
+  border-radius: 8px;
+  padding: 10px 22px;
+  font-family: monospace;
+  font-size: 16px;
+  font-weight: bold;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  min-width: 130px;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.maze-btn-turn:hover {
+  background: #4a2e00;
+  border-color: #aa7700;
+  color: #ffdd77;
+}
+
+.maze-btn-turn:active {
+  background: #220f00;
+}
+
+/* ── Disabled state (all action buttons) ────────────────────────────────────── */
+/*
+ * Applied automatically when the HTML `disabled` attribute is set on a button.
+ * Covers:
+ *   • During a Forward animation (player is mid-move).
+ *   • During the 2-second crash-delay after hitting a wall.
+ *   • During a voluntary restart (brief gap before scene.restart fires).
+ *
+ * WHY opacity instead of a colour change?
+ *   Opacity dims the button uniformly, keeping the green/amber colour coding
+ *   readable even in the disabled state — kids can still tell which button
+ *   is Forward vs. Turn. `cursor: not-allowed` reinforces that the button
+ *   is temporarily unavailable rather than broken.
+ */
+
+.maze-btn-forward:disabled,
+.maze-btn-turn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Start Over button ───────────────────────────────────────────────────────── */
+/*
+ * Intentionally smaller and quieter than the Forward/Turn buttons.
+ * It should be accessible ("I want to try a different approach") but not
+ * visually compete with the primary action buttons.
+ *
+ * WHY NOT disabled during a crash or mid-move?
+ *   Voluntary restart is allowed at any time. Even if the scene is already
+ *   resetting, MazeScene.restartGame() guards against double-restart internally.
+ */
+
+.maze-btn-reset {
+  background: #111827;
+  color: #6699bb;
+  border: 1px solid #2a3a4a;
+  border-radius: 6px;
+  padding: 7px 20px;
+  font-family: monospace;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.maze-btn-reset:hover {
+  background: #1a2a3a;
+  border-color: #4a6a8a;
+  color: #88bbdd;
+}
+
+.maze-btn-reset:active {
+  background: #0a1520;
+}
