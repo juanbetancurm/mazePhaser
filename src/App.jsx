@@ -182,14 +182,28 @@ export default function App() {
     if (distance <= 0) return;
 
     const accepted = scene.goForward(distance, (x, y) => {
-      // Called by MazeScene after the move timer fires and the player stops.
       setPosition({ x: Math.round(x), y: Math.round(y) });
-      setDisabled(false); // re-enable buttons now that the move is complete
+      setDisabled(false);
     });
 
     if (accepted) {
-      setDisabled(true);    // lock buttons during the forward animation
+      setDisabled(true);
       setMoveCount(c => c + 1);
+
+      // WHAT: Clear the distance input after a successful move.
+      //
+      // WHY: Forces the kid to type a NEW distance for the next move.
+      //   Without this, the old value stays and the kid can just mash
+      //   the Forward button without thinking about each step.
+      //   Every move should be a conscious decision: "How far this time?"
+      //
+      // HOW: distRef.current is the actual <input> DOM element.
+      //   Setting .value = '' directly changes what the browser displays.
+      //   This works because we use an UNCONTROLLED input (ref + defaultValue),
+      //   not a controlled one (value + onChange + useState).
+      //   With a controlled input, we'd need to call a setState function
+      //   instead — setting .value directly would be overwritten by React.
+      distRef.current.value = '';
     }
   };
 
@@ -211,6 +225,12 @@ export default function App() {
     if (newAngle !== undefined) {
       setFacingAngle(newAngle);
       setMoveCount(c => c + 1);
+
+      // WHAT: Clear the degrees input after a successful turn.
+      // WHY: Same reason as Forward — the kid should decide the angle
+      //   for each turn deliberately, not reuse the old value by habit.
+      // HOW: Same technique — direct DOM manipulation via the ref.
+      degreesRef.current.value = '';
     }
   };
 
@@ -222,6 +242,11 @@ export default function App() {
     if (newAngle !== undefined) {
       setFacingAngle(newAngle);
       setMoveCount(c => c + 1);
+
+      // WHAT: Clear the degrees input after a successful turn.
+      // WHY: Consistent with Forward — every action requires fresh input.
+      // HOW: Direct DOM manipulation via degreesRef.
+      degreesRef.current.value = '';
     }
   };
 
@@ -348,15 +373,25 @@ export default function App() {
         }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             Distance:
-            <input
-              ref={distRef}
-              type="number"
-              defaultValue={50}
-              min={1}
-              step={10}
-              className="maze-input"
-              style={{ width: '72px' }}
-            />
+          {/*
+            WHAT: The distance input — how far the player walks on Forward.
+            WHY placeholder: After each move, this input is cleared to force the kid
+              to think about the next distance. The placeholder text "px" appears
+              inside the empty box as a subtle reminder of what to type here.
+            HOW: placeholder only shows when the input is empty. As soon as the kid
+              starts typing, it disappears. defaultValue sets the initial value on
+              page load only — after that the input is "uncontrolled" by React.
+          */}
+          <input
+            ref={distRef}
+            type="number"
+            defaultValue={50}
+            min={1}
+            step={10}
+            placeholder="px"
+            className="maze-input"
+            style={{ width: '72px' }}
+          />
             <span>px</span>
           </label>
 
@@ -382,12 +417,18 @@ export default function App() {
         }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             Degrees:
+            {/*
+              WHAT: The degrees input — how many degrees to turn on Left/Right.
+              WHY placeholder: Same as distance — cleared after each turn, and the
+              "°" symbol reminds the kid what unit to think in.
+            */}
             <input
               ref={degreesRef}
               type="number"
               defaultValue={90}
               min={0}
               step={5}
+              placeholder="°"
               className="maze-input"
               style={{ width: '72px' }}
             />
