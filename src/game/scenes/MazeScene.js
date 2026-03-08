@@ -324,7 +324,7 @@ export default class MazeScene extends Phaser.Scene {
     }
 
     // Pick the wall data array for the current level.
-    const walls = this.game._currentLevel === 2 ? wallsLevel2 : wallsLevel1;
+    const walls = this.game._currentLevel === 2 ? wallsLevel1 : wallsLevel2;
 
 
     // ── 1. Background colour ──────────────────────────────────────────────────
@@ -465,7 +465,7 @@ export default class MazeScene extends Phaser.Scene {
     //
     // NOTE: The moving needle is created LAST (see §9b) so it always renders
     //   on top. Only the static ring is drawn here.
-    this._drawCompass();
+    // this._drawCompass();
 
 
     // ── 7. Trail graphics layer (renders BELOW the player) ───────────────────
@@ -597,7 +597,7 @@ export default class MazeScene extends Phaser.Scene {
     //   The needle changes every time the facing angle changes. Keeping them
     //   on separate Graphics objects lets us `clear()` and redraw just the
     //   needle, leaving the static ring untouched — efficient and correct.
-    this.compassNeedleGfx = this.add.graphics();
+    // this.compassNeedleGfx = this.add.graphics();
 
 
     // ── 10. Game state ────────────────────────────────────────────────────────
@@ -1273,7 +1273,7 @@ export default class MazeScene extends Phaser.Scene {
       indB1X,  indB1Y,
       indB2X,  indB2Y,
     );
-
+/* 
     // ── 3. Compass needle ─────────────────────────────────────────────────────
     //
     // A line from the compass ring's centre to a point NEEDLE_R px away in the
@@ -1299,7 +1299,7 @@ export default class MazeScene extends Phaser.Scene {
 
     // Small pivot dot at the ring's centre — makes the needle look anchored.
     this.compassNeedleGfx.fillStyle(0xffee44, 0.9);
-    this.compassNeedleGfx.fillCircle(this.compassCX, this.compassCY, 3);
+    this.compassNeedleGfx.fillCircle(this.compassCX, this.compassCY, 3); */
   }
 
   /**
@@ -1324,7 +1324,7 @@ export default class MazeScene extends Phaser.Scene {
    *   static ring sits at the bottom of the z-stack. The needle is created
    *   last in create() so it renders above everything else.
    */
-  _drawCompass() {
+  /* _drawCompass() {
     // Store centre on `this` so setPreviewAngle() can reach it when drawing
     // the live needle (a separate Graphics object that must know the centre).
     this.compassCX = 80;  // px from left
@@ -1413,5 +1413,5 @@ export default class MazeScene extends Phaser.Scene {
       color: '#445566',
       fontFamily: 'monospace',
     }).setOrigin(0.5);
-  }
+  } */
 }
