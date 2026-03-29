@@ -306,7 +306,39 @@ export default function App() {
     getScene()?.setLevel(level);
   };
 
+
+
+
+
+
+
+
+
   // ── Render ────────────────────────────────────────────────────────────────────
+  //
+  // LAYOUT STRUCTURE:
+  //
+  //   <root column>          ← vertical: title on top, content below
+  //     <title />
+  //     <level buttons />
+  //     <content row>        ← horizontal: maze left, controls right
+  //       <game-container /> ← left: the Phaser canvas
+  //       <sidebar column>   ← right: controls + status stacked vertically
+  //         <forward card />
+  //         <turn card />
+  //         <start over />
+  //         <encourage msg />
+  //         <status />
+  //       </sidebar>
+  //     </content>
+  //   </root>
+  //
+  // WHY this structure?
+  //   The title and level buttons span the full width (they're outside the row).
+  //   The maze and controls sit side-by-side inside the row.
+  //   The controls panel uses flexDirection: 'column' to stack its children
+  //   vertically, and justifyContent: 'center' to vertically center them
+  //   against the maze canvas height.
 
   return (
     <div style={{
@@ -316,7 +348,7 @@ export default function App() {
       padding: '16px',
     }}>
 
-      {/* ── Header ───────────────────────────────────────────────────────────── */}
+      {/* ── Header (spans full width) ──────────────────────────────────────── */}
       <h1 style={{
         fontFamily: 'monospace',
         fontSize: '22px',
@@ -327,6 +359,16 @@ export default function App() {
         AngleMaze — Move with Math!
       </h1>
 
+      {/* ── Level selector (spans full width) ──────────────────────────────── */}
+      {/*
+        WHAT: Level buttons sit above the maze + controls row.
+        WHY: They apply to the whole game, not just the controls panel.
+        HOW: They're outside the row div, so they span the full width.
+
+        NOTE: If your level buttons are currently somewhere else in the JSX,
+        move them here — between the <h1> and the row div below.
+        If you don't have level buttons yet, skip this section.
+      */}
       {/* ── Level selector ───────────────────────────────────────────────── */}
       {/*
         WHAT: Two buttons that let the kid switch between levels.
@@ -376,161 +418,177 @@ export default function App() {
         </button>
       </div>
 
-      <div id="game-container" />
-
-      {/* ── Control panel ────────────────────────────────────────────────────── */}
+      {/* ── Side-by-side row: maze (left) + controls (right) ──────────────── */}
+      {/*
+        WHAT: A horizontal flex container that puts the Phaser canvas on the
+          left and the control panel on the right.
+        WHY: So the kid can see the maze AND the controls at the same time,
+          without scrolling.
+        HOW: display: 'flex' with flexDirection: 'row' (the default).
+          gap: '24px' adds spacing between the canvas and controls.
+          alignItems: 'flex-start' aligns both to the top edge.
+      */}
       <div style={{
-        marginTop: '18px',
         display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: '14px',
-        fontFamily: 'monospace',
-        fontSize: '14px',
-        color: '#99aabb',
+        flexDirection: 'row',
+        gap: '24px',
+        alignItems: 'flex-start',
       }}>
 
-        {/* ── Forward card (green) ─────────────────────────────────────────── */}
+        {/* ── Left side: Phaser game canvas ────────────────────────────────── */}
+        {/*
+          WHAT: The div Phaser injects its <canvas> into.
+          WHY: It must be a separate element so Phaser can control it.
+          HOW: Phaser's config.js has `parent: 'game-container'`, which tells
+            Phaser to find this div by id and append the canvas inside it.
+            The canvas is 800×600 px (set in config.js width/height).
+            flexShrink: 0 prevents the canvas from being squished if the
+            browser window is narrower than the total row width.
+        */}
+        <div id="game-container" style={{ flexShrink: 0 }} />
+
+        {/* ── Right side: control panel ────────────────────────────────────── */}
+        {/*
+          WHAT: All the turtle controls, the restart button, encourage message,
+            and status readout — stacked vertically in a sidebar.
+          WHY: Keeps controls visible at all times alongside the maze.
+          HOW: flexDirection: 'column' stacks children vertically.
+            justifyContent: 'center' vertically centers the controls
+            against the height of the maze canvas (600px).
+            minWidth prevents the controls from collapsing too narrow.
+        */}
         <div style={{
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          gap: '10px',
-          padding: '14px 24px',
-          border: '1px solid #1a4a1a',
-          borderRadius: '10px',
-          background: '#0a1f0a',
+          justifyContent: 'center',
+          gap: '14px',
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#99aabb',
+          minWidth: '200px',
         }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            Distance:
-          {/*
-            WHAT: The distance input — how far the player walks on Forward.
-            WHY placeholder: After each move, this input is cleared to force the kid
-              to think about the next distance. The placeholder text "px" appears
-              inside the empty box as a subtle reminder of what to type here.
-            HOW: placeholder only shows when the input is empty. As soon as the kid
-              starts typing, it disappears. defaultValue sets the initial value on
-              page load only — after that the input is "uncontrolled" by React.
-          */}
-          <input
-            ref={distRef}
-            type="number"
-            defaultValue={50}
-            min={1}
-            step={10}
-            placeholder="px"
-            className="maze-input"
-            style={{ width: '72px' }}
-          />
-            <span>px</span>
-          </label>
 
-          <button
-            onClick={handleForward}
-            disabled={disabled}
-            className="maze-btn-forward"
-          >
-            ▲ Forward
-          </button>
-        </div>
+          {/* ── Forward card (green) ───────────────────────────────────────── */}
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '10px',
+            padding: '14px 24px',
+            border: '1px solid #1a4a1a',
+            borderRadius: '10px',
+            background: '#0a1f0a',
+            width: '100%',
+          }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              Distance:
+              <input
+                ref={distRef}
+                type="number"
+                defaultValue={50}
+                min={1}
+                step={10}
+                placeholder="px"
+                className="maze-input"
+                style={{ width: '72px' }}
+              />
+              <span>px</span>
+            </label>
 
-        {/* ── Turn card (amber) ────────────────────────────────────────────── */}
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '10px',
-          padding: '14px 24px',
-          border: '1px solid #4a3800',
-          borderRadius: '10px',
-          background: '#1a1200',
-        }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            Degrees:
-            {/*
-              WHAT: The degrees input — how many degrees to turn on Left/Right.
-              WHY placeholder: Same as distance — cleared after each turn, and the
-              "°" symbol reminds the kid what unit to think in.
-            */}
-            <input
-              ref={degreesRef}
-              type="number"
-              defaultValue={90}
-              min={0}
-              step={5}
-              placeholder="°"
-              className="maze-input"
-              style={{ width: '72px' }}
-            />
-            <span>°</span>
-          </label>
-
-          <div style={{ display: 'flex', gap: '12px' }}>
             <button
-              onClick={handleTurnLeft}
+              onClick={handleForward}
               disabled={disabled}
-              className="maze-btn-turn"
+              className="maze-btn-forward"
             >
-              ↰ Turn Left
-            </button>
-            <button
-              onClick={handleTurnRight}
-              disabled={disabled}
-              className="maze-btn-turn"
-            >
-              Turn Right ↱
+              ▲ Forward
             </button>
           </div>
-        </div>
 
-        {/* ── Start Over button ────────────────────────────────────────────── */}
-        {/*
-          Always visible — kids should feel free to restart at any point.
-          Not disabled even during forward movement (voluntary restart from
-          a safe position should be allowed). But if already resetting, the
-          scene's restartGame() returns early without double-restarting.
-        */}
-        <button
-          onClick={handleStartOver}
-          className="maze-btn-reset"
-        >
-          🔄 Start Over
-        </button>
+          {/* ── Turn card (amber) ──────────────────────────────────────────── */}
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '10px',
+            padding: '14px 24px',
+            border: '1px solid #4a3800',
+            borderRadius: '10px',
+            background: '#1a1200',
+            width: '100%',
+          }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              Degrees:
+              <input
+                ref={degreesRef}
+                type="number"
+                defaultValue={90}
+                min={0}
+                step={5}
+                placeholder="°"
+                className="maze-input"
+                style={{ width: '72px' }}
+              />
+              <span>°</span>
+            </label>
+
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                onClick={handleTurnLeft}
+                disabled={disabled}
+                className="maze-btn-turn"
+              >
+                ↰ Turn Left
+              </button>
+              <button
+                onClick={handleTurnRight}
+                disabled={disabled}
+                className="maze-btn-turn"
+              >
+                Turn Right ↱
+              </button>
+            </div>
+          </div>
+
+          {/* ── Start Over button ──────────────────────────────────────────── */}
+          <button
+            onClick={handleStartOver}
+            className="maze-btn-reset"
+          >
+            🔄 Start Over
+          </button>
+
+          {/* ── Encourage message ──────────────────────────────────────────── */}
+          {encourageMsg && (
+            <div style={{
+              fontFamily: 'monospace',
+              fontSize: '15px',
+              fontWeight: 'bold',
+              color: '#55ee88',
+              textAlign: 'center',
+            }}>
+              {encourageMsg}
+            </div>
+          )}
+
+          {/* ── Status readout ─────────────────────────────────────────────── */}
+          <div style={{
+            fontFamily: 'monospace',
+            fontSize: '13px',
+            color: '#556677',
+            textAlign: 'center',
+            lineHeight: '1.7',
+          }}>
+            <div>Position: ({position.x}, {position.y})</div>
+            <div>Facing: {facingAngle}°{facingLabel(facingAngle)}</div>
+            <div>Moves: {moveCount}</div>
+          </div>
+
+        </div>
+        {/* ── End of control panel ─────────────────────────────────────────── */}
 
       </div>
-
-      {/* ── Encourage message ────────────────────────────────────────────────── */}
-      {/*
-        Appears for 3 seconds after any restart (crash or voluntary).
-        Empty string = not shown. The bright green colour is deliberately
-        positive — a reward message, not a failure notification.
-      */}
-      {encourageMsg && (
-        <div style={{
-          marginTop: '12px',
-          fontFamily: 'monospace',
-          fontSize: '15px',
-          fontWeight: 'bold',
-          color: '#55ee88',
-          textAlign: 'center',
-        }}>
-          {encourageMsg}
-        </div>
-      )}
-
-      {/* ── Status readout ───────────────────────────────────────────────────── */}
-      <div style={{
-        marginTop: encourageMsg ? '8px' : '16px',
-        fontFamily: 'monospace',
-        fontSize: '13px',
-        color: '#556677',
-        textAlign: 'center',
-        lineHeight: '1.7',
-      }}>
-        <div>Position: ({position.x}, {position.y})</div>
-        <div>Facing: {facingAngle}°{facingLabel(facingAngle)}</div>
-        <div>Moves: {moveCount}</div>
-      </div>
+      {/* ── End of side-by-side row ──────────────────────────────────────────── */}
 
     </div>
   );
