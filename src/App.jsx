@@ -35,8 +35,15 @@ export default function App() {
 
   // ── State ─────────────────────────────────────────────────────────────────────
 
-  const [position,     setPosition]     = useState({ x: 60, y: 60 });
-  const [facingAngle,  setFacingAngle]  = useState(0);
+  // WHAT: Initial position and facing angle for the React status display.
+  // WHY: These must match the DEFAULT level's LEVEL_CONFIG values.
+  //   Default level is 2 → start at (740, 60) facing 180° (left).
+  //   If you change the default level back to 1, change these to
+  //   { x: 60, y: 60 } and 0.
+  // HOW: After Phaser's create() runs, _onReset syncs these to the actual
+  //   values. But for the brief moment before that, React uses these.
+  const [position,     setPosition]     = useState({ x: 740, y: 60 });
+  const [facingAngle,  setFacingAngle]  = useState(180);
   const [moveCount,    setMoveCount]    = useState(0);
 
   /**
@@ -114,22 +121,45 @@ export default function App() {
      *   - Buttons re-enabled.
      *   - Encourage message shown for 3 seconds then cleared.
      */
-    gameRef.current._onReset = (wasRestart) => {
+    /**
+     * _onReset(wasRestart, cfg)
+     *
+     * WHAT: Called by MazeScene.create() to sync React state with Phaser.
+     *
+     * @param {boolean} wasRestart  true if this is a restart, false on first load.
+     * @param {Object}  cfg         The LEVEL_CONFIG entry for the current level:
+     *   { startX, startY, exitX, exitY, facingAngle }
+     *
+     * WHY the `cfg` parameter?
+     *   Before: we always reset to (60, 60) and 0° — correct for Level 1,
+     *   but WRONG for Level 2 (start at 740, 60, facing 180°).
+     *   Now: Phaser passes the level config, so React uses the right values.
+     *
+     * HOW the destructuring works:
+     *   const { startX = 60, startY = 60, facingAngle: startAngle = 0 } = cfg || {};
+     *
+     *   This says:
+     *   - Pull startX from cfg. If missing, use 60.
+     *   - Pull startY from cfg. If missing, use 60.
+     *   - Pull facingAngle from cfg, rename it to startAngle. If missing, use 0.
+     *   - If cfg itself is undefined/null, use {} (empty object) so all defaults kick in.
+     *
+     *   The rename `facingAngle: startAngle` avoids shadowing the React state
+     *   variable also called `facingAngle`.
+     */
+    gameRef.current._onReset = (wasRestart, cfg) => {
+      const { startX = 60, startY = 60, facingAngle: startAngle = 0 } = cfg || {};
+
       setDisabled(false);
-      setPosition({ x: 60, y: 60 });
-      setFacingAngle(0);
+      setPosition({ x: startX, y: startY });
+      setFacingAngle(startAngle);
       setMoveCount(0);
 
-      // Sync React's level display with Phaser's actual level.
-      // WHY read from gameRef instead of using React state?
-      //   Phaser is the source of truth for which level is active.
-      //   setLevel() changes it on the Phaser side; we read it back here
-      //   to make sure React always agrees.
       const level = gameRef.current?._currentLevel ?? 1;
       setCurrentLevel(level);
 
       if (wasRestart) {
-        setEncourageMsg('Try again! You got this! 💪');
+        setEncourageMsg('Try again! You got this!');
         setTimeout(() => setEncourageMsg(''), 3000);
       }
     };

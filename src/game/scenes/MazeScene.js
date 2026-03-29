@@ -75,6 +75,50 @@ const MOVE_SPEED = 300; // pixels per second
  */
 const TILE_SIZE = 8;
 
+/**
+ * LEVEL_CONFIG — per-level settings for start position, exit position,
+ * and initial facing direction.
+ *
+ * WHAT: A lookup table mapping level number → positions and angle.
+ *   Each level can place the player and exit anywhere on the 800×600 canvas.
+ *
+ * WHY centralize this?
+ *   Before this change, the start (60,60), exit (740,540), and facing angle (0°)
+ *   were hardcoded as bare numbers scattered across create(). If you wanted
+ *   Level 2 to start in a different corner, you'd need to find and modify
+ *   5+ places. With LEVEL_CONFIG, you change ONE object and everything updates.
+ *
+ * HOW it's used:
+ *   In create(), we read:
+ *     const cfg = LEVEL_CONFIG[this.game._currentLevel];
+ *   Then use cfg.startX, cfg.startY, etc. wherever we previously had
+ *   hardcoded numbers.
+ *
+ * HOW to add a new level:
+ *   Just add a new entry: 3: { startX: ..., startY: ..., ... }
+ *
+ * COORDINATE REMINDER:
+ *   (0,0) = top-left. X increases → right. Y increases ↓ down.
+ *   facingAngle: 0° = right, 90° = up, 180° = left, 270° = down.
+ */
+const LEVEL_CONFIG = {
+  1: {
+    startX: 60,         // top-left area (same as before)
+    startY: 60,
+    exitX: 740,         // bottom-right area (same as before)
+    exitY: 540,
+    facingAngle: 0,     // facing RIGHT → toward the maze
+  },
+  2: {
+    startX: 740,        // top-RIGHT corner
+    startY: 60,
+    exitX: 150,         // near top-left, a bit to the right
+    exitY: 50,
+    facingAngle: 180,   // facing LEFT → toward the exit
+  },
+  // Add Level 3 here later:
+  // 3: { startX: ..., startY: ..., exitX: ..., exitY: ..., facingAngle: ... },
+};
 
 /**
  * createDiagonalWallBodies(scene, x1, y1, x2, y2, wallGroup)
@@ -284,28 +328,39 @@ export default class MazeScene extends Phaser.Scene {
    */
   create() {
 
-    // ── 0. Scene-restart detection ────────────────────────────────────────────
+    // WHAT: Read the position/angle config for the current level.
+    // WHY: Every level can have different start, exit, and facing direction.
+    // HOW: LEVEL_CONFIG is a lookup table defined at the top of this file.
+    //   If the current level has no config entry, fall back to Level 1's
+    //   settings — this prevents a crash if you forget to add config for
+    //   a new level.
+    const cfg = LEVEL_CONFIG[this.game._currentLevel] || LEVEL_CONFIG[1];
+    
+ 
+    // ── Scene-restart detection ────────────────────────────────────────────
+    
+    // WHAT: Notify React when the scene starts or restarts.
     //
-    // WHAT: `this.scene.restart()` creates a FRESH instance of MazeScene,
-    //   calling create() again from scratch. All Phaser state — game objects,
-    //   timers, physics bodies, graphics — is wiped clean automatically.
+    // WHY pass `cfg`?
+    //   React holds its own copies of position and facingAngle (useState).
+    //   Phaser's scene restart resets Phaser's state, but React's state is
+    //   completely separate. We must tell React what the starting values are
+    //   for THIS level. Before this change, React always reset to (60,60)
+    //   and 0° — wrong for Level 2 which starts at (740,60) facing 180°.
     //
-    // HOW we detect a restart vs. first load:
-    //   `this.game` is the Phaser.Game object. It survives ALL scene restarts
-    //   because only the scene is recreated, not the entire game engine.
-    //   We store a `_hasStarted` flag on it to tell the two cases apart.
+    // HOW: _onReset receives (wasRestart, cfg):
+    //   wasRestart = true if this is a scene restart, false on first load.
+    //   cfg = the LEVEL_CONFIG entry with startX, startY, facingAngle, etc.
     //
-    // WHY notify React on restart?
-    //   React holds its own copy of game state (position, facing angle, move
-    //   counter) in useState. Phaser's create() resets Phaser state
-    //   automatically — but React's state is completely separate and must be
-    //   reset explicitly by calling the React setState functions stored on the
-    //   game object as `game._onReset`.
-    // ── 0. Scene-restart detection and level selection ──────────────────────
+    // NOTE: We must read `cfg` AFTER the level selection code above has run
+    //   (Spot A). That's why the restart detection was moved below the
+    //   level selection. If your code still has this block ABOVE the level
+    //   selection, move the whole block to AFTER the `const cfg = ...` line.
     if (this.game._hasStarted) {
-      this.game._onReset?.(true);
+      this.game._onReset?.(true, cfg);
     } else {
       this.game._hasStarted = true;
+      this.game._onReset?.(false, cfg);
     }
 
     // ── 0b. Level selection ─────────────────────────────────────────────────
@@ -324,8 +379,7 @@ export default class MazeScene extends Phaser.Scene {
     }
 
     // Pick the wall data array for the current level.
-    const walls = this.game._currentLevel === 2 ? wallsLevel1 : wallsLevel2;
-
+    const walls = this.game._currentLevel === 2 ? wallsLevel2 : wallsLevel1;
 
     // ── 1. Background colour ──────────────────────────────────────────────────
     // `this.cameras.main` is the default camera Phaser creates for every scene.
@@ -425,7 +479,10 @@ export default class MazeScene extends Phaser.Scene {
     //
     // Cell [0,0] spans x=0–200, y=0–200.
     // (60, 60) is well clear of the boundary walls and the x=300 stub.
-    this.add.rectangle(60, 60, 40, 40, 0x00cc55, 0.5); // green, 50 % opaque
+    
+    // WHAT: Draw the start zone at the position from LEVEL_CONFIG.
+    // WHY: Level 1 starts top-left (60,60). Level 2 starts top-right (740,60).
+    this.add.rectangle(cfg.startX, cfg.startY, 40, 40, 0x00cc55, 0.5);
 
 
     // ── 5. Exit zone (static body — needed for overlap detection) ─────────────
@@ -447,7 +504,10 @@ export default class MazeScene extends Phaser.Scene {
     //
     // Cell [3,2] spans x=600–800, y=400–600.
     // (740, 540) sits comfortably inside, clear of the x=600 and x=800 walls.
-    const exitZone = this.add.rectangle(740, 540, 40, 40, 0xffd700, 0.8); // gold
+    // WHAT: Draw the exit zone at the position from LEVEL_CONFIG.
+    // WHY: Level 1 exits bottom-right (740,540). Level 2 exits near top-left (150,50).
+    const exitZone = this.add.rectangle(cfg.exitX, cfg.exitY, 40, 40, 0xffd700, 0.8);
+    
     this.physics.add.existing(exitZone, true); // true = STATIC body
 
 
@@ -499,7 +559,8 @@ export default class MazeScene extends Phaser.Scene {
     //                       Used for: the player (and eventually enemies, bullets).
     //
     // The player starts at (60, 60) — the centre of the start zone above.
-    this.player = this.add.rectangle(60, 60, 20, 20, 0x4499ff); // bright blue
+    // WHAT: Create the player at this level's start position.
+    this.player = this.add.rectangle(cfg.startX, cfg.startY, 20, 20, 0x4499ff);
 
     // Register the rectangle as a DYNAMIC physics body.
     // Omitting the second argument (or passing `false`) = dynamic.
@@ -646,7 +707,13 @@ export default class MazeScene extends Phaser.Scene {
      *     −35 + 360    →  325
      *     325 % 360    →  325  ✓  (facing lower-right, ~5 o'clock)
      */
-    this.facingAngle = 0; // start facing right (0° = →)
+     // WHAT: Set the initial facing direction from the level config.
+    // WHY: Level 1 faces RIGHT (0°) — the exit is to the right.
+    //   Level 2 faces LEFT (180°) — the exit is to the left.
+    //   The arrow, on-body triangle, and React's "Facing:" display
+    //   all read this value, so setting it correctly here makes
+    //   everything consistent from the very first frame.
+    this.facingAngle = cfg.facingAngle;
 
     // Guard flag: the overlap callback fires every frame the player is inside
     // the exit zone. Without this flag, "You Win!" would be added to the scene
