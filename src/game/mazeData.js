@@ -62,43 +62,60 @@ const walls = [
   // (x1 === x2). A gap between two cells means there is NO wall there —
   // the player can pass through freely.
 
-  // — Horizontal walls (run left/right, block vertical movement) —
 
+  // Vertical Wall Top Left
+  // Stub in cell [1,0]: juts down from the top edge at x=300.
+  { x1: 300, y1:   0, 
+    x2: 300, y2: 200 },
+
+  //Horizontal Lines Top Left, Bottom Left, and Bottom Center
   // Seals the bottom of cells [1,0] and the top of cells [1,1] + [2,1]:
   // blocks the direct downward shortcut from the top corridor.
-  { x1: 200, y1: 200, x2: 400, y2: 200 },
-
-  // Seals the bottom of the left dead-end [1,1] and right-sealed [2,1]:
-  { x1: 200, y1: 400, x2: 400, y2: 400 },
-  { x1: 400, y1: 400, x2: 600, y2: 400 },
+  //    ___
+  //    _ _ ___
+  //    
+  { x1: 200, y1: 200, 
+    x2: 350, y2: 200 },
+  
+  // Splited Bottom Left Wall to allow upwards movement:
+  { x1: 200, y1: 400, 
+    x2: 250, y2: 400 },
+    
+  { x1: 350, y1: 400, 
+    x2: 500, y2: 400 }, //This arrives to the center-right
 
   // — Vertical walls (run up/down, block horizontal movement) —
+  //    |
+  //    |
+  //    
+  // Second one incomplete to allow movement to the right
+  { x1: 200, y1: 200, 
+    x2: 200, y2: 400 },
 
-  // Right wall of the left dead-end column (cells [0,1] and [0,2]
-  // cannot escape to the right):
-  { x1: 200, y1: 200, x2: 200, y2: 400 },
-  { x1: 200, y1: 400, x2: 200, y2: 600 },
+  { x1: 200, y1: 400, 
+    x2: 200, y2: 500 }, //Finished before bottom end
 
   // Right wall of the sealed centre room [1,1] and [1,2]:
-  { x1: 400, y1: 200, x2: 400, y2: 400 },
-  { x1: 400, y1: 400, x2: 400, y2: 600 },
+  { x1: 400, y1: 300, 
+    x2: 400, y2: 400 },
+
+  { x1: 400, y1: 400, 
+    x2: 400, y2: 600 },
+
+    
+  // Vertical Wall Medium Center
+  { x1: 500, y1: 200, 
+    x2: 500, y2: 400 },
 
   // Separates the solution-path columns [2,*] from the top-right pocket [3,0]
   // and the bottom-right locked zone [3,2] left side:
-  { x1: 600, y1:   0, x2: 600, y2: 200 }, // top-right pocket left wall
-  { x1: 600, y1: 400, x2: 600, y2: 600 }, // bottom-right locked zone left wall
+  { x1: 600, y1:   0, 
+    x2: 600, y2: 400 }, // top-right pocket left wall
+  
+  { x1: 600, y1: 400, 
+    x2: 600, y2: 500 }, // bottom-right locked zone left wall
 
-  // ── Stub walls (partial — do not span a full cell edge) ────────────────────
-  // These create narrower passages within corridors, forcing the player to think
-  // about the exact angle and distance needed to navigate around them.
-
-  // Stub in cell [1,0]: juts down from the top edge at x=300.
-  // The player must travel at y > 100 to slip past it on the way right.
-  { x1: 300, y1:   0, x2: 300, y2: 100 },
-
-  // Stub in cell [2,1]: juts down from y=200 at x=500.
-  // The player must travel at x ≠ 500 (e.g., x=450 or x=550) to pass it.
-  { x1: 500, y1: 200, x2: 500, y2: 300 },
+  
 
 ];
 

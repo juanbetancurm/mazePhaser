@@ -37,6 +37,11 @@ const config = {
   //       its canvas as a child of that div so React controls layout.
   parent: 'game-container',
 
+  // WHAT: Use nearest-neighbor scaling for all textures.
+  // WHY: Keeps pixel-art textures crisp when scaled up.
+  // HOW: Sets image-rendering: pixelated on canvas, gl.NEAREST in WebGL.
+  pixelArt: true,
+  
   // WHAT: Arcade Physics configuration block.
   // HOW:  Phaser only activates physics for bodies you explicitly call
   //       `this.physics.add.*` on inside a scene, so there's no cost for

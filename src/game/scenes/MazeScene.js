@@ -20,6 +20,13 @@ import Phaser from 'phaser';
 import wallsLevel1 from '../mazeData.js';
 import wallsLevel2 from '../mazeDataLevel2.js';
 
+import {
+  preloadThemeAssets, isThemeLoaded,
+  drawThemedBackground, drawThemedBorder, drawThemedWalls,
+  createThemedPlayer, createThemedExit, createThemedStart,
+  placeThemedEnemies,
+  updatePlayerRotation, flashPlayerCrash, getTrailStyle,
+} from '../minecraftTheme.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -303,19 +310,14 @@ export default class MazeScene extends Phaser.Scene {
     super({ key: 'MazeScene' });
   }
 
-  /**
-   * preload()
-   * WHAT: Load external assets (images, spritesheets, audio) before the scene starts.
-   * HOW:  `this.load.*` methods queue assets; Phaser fetches them and waits for all
-   *       to finish before calling create().
-   * WHY:  Game objects that depend on textures must not be created before the texture
-   *       data is available in memory. This phase handles that guarantee.
-   *
-   * For AngleMaze we draw everything with the Graphics API (no image files needed),
-   * so this method intentionally stays empty.
-   */
   preload() {
-    // No external assets to load — walls and the player will be drawn with Phaser Graphics.
+    // WHAT: Queue all Minecraft theme images for downloading.
+    // WHY: Phaser's preload() guarantees all queued files are fully loaded
+    //   before create() runs. If we loaded in create(), the images wouldn't
+    //   be available immediately.
+    // HOW: preloadThemeAssets checks if each texture already exists (from a
+    //   previous load before scene restart) and only loads missing ones.
+    preloadThemeAssets(this);
   }
 
   /**
@@ -328,6 +330,12 @@ export default class MazeScene extends Phaser.Scene {
    */
   create() {
 
+    // WHAT: Check if all theme images loaded successfully.
+    // WHY: If any image is missing (user hasn't placed the PNGs yet),
+    //   we fall back to the original flat-color rendering.
+    //   Every themed rendering function checks this flag.
+    this._themed = isThemeLoaded(this);
+    
     // WHAT: Read the position/angle config for the current level.
     // WHY: Every level can have different start, exit, and facing direction.
     // HOW: LEVEL_CONFIG is a lookup table defined at the top of this file.
@@ -384,42 +392,20 @@ export default class MazeScene extends Phaser.Scene {
     // ── 1. Background colour ──────────────────────────────────────────────────
     // `this.cameras.main` is the default camera Phaser creates for every scene.
     // Setting its background colour avoids the default black or transparent canvas.
-    this.cameras.main.setBackgroundColor('#1a1a2e');
+    // WHAT: Grass-tiled background (themed) or solid color (fallback).
+    drawThemedBackground(this);
+    if (!this._themed) {
+      this.cameras.main.setBackgroundColor('#1a1a2e');
+    }
 
 
     // ── 2. Draw walls visually with the Graphics API ──────────────────────────
     //
-    // WHAT: `this.add.graphics()` creates a Graphics game object.
-    //       Think of it as a blank sheet of paper you can draw on using
-    //       vector commands (moveTo, lineTo, arc, fillRect, etc.).
-    //
-    // WHY use Graphics instead of image files?
-    //   • No art assets required — walls are just line segments, which we can
-    //     describe perfectly with coordinates.
-    //   • Easy to change: editing a number in mazeData.js instantly updates
-    //     both the visual and the physics body.
-    //   • Teaches the separation between visual rendering and physics — the
-    //     Graphics object only draws; a separate rectangle handles collisions.
-    //
-    // HOW it works under the hood:
-    //   Phaser batches all the `moveTo`/`lineTo` calls into a WebGL draw call
-    //   (or Canvas 2D path) and renders it once per frame. `strokePath()` is
-    //   the command that actually sends the path to the GPU/canvas.
-    const gfx = this.add.graphics();
+    // WHAT: Draw walls as thick dirt-block lines (themed) or thin gray (fallback).
+    drawThemedWalls(this, walls);
 
-    // lineStyle(lineWidth, color, alpha)
-    //   lineWidth — thickness of the stroke in pixels
-    //   color     — hex colour as a JavaScript number (0xRRGGBB)
-    //   alpha     — opacity, 0 = invisible, 1 = fully opaque
-    gfx.lineStyle(4, 0xcccccc, 1); // light grey, 4 px wide
-
-    walls.forEach(({ x1, y1, x2, y2 }) => {
-      gfx.beginPath();       // start a new path (clears any previous path state)
-      gfx.moveTo(x1, y1);   // lift the "pen" and place it at the wall's start point
-      gfx.lineTo(x2, y2);   // draw a line to the wall's end point
-      gfx.strokePath();      // paint the current path using the active lineStyle
-                             // NOTE: without strokePath() the line is invisible!
-    });
+    // WHAT: Draw a wood/log border around the maze edge (themed only).
+    drawThemedBorder(this);
 
 
     // ── 3. Create static physics bodies for every wall ────────────────────────
@@ -482,7 +468,7 @@ export default class MazeScene extends Phaser.Scene {
     
     // WHAT: Draw the start zone at the position from LEVEL_CONFIG.
     // WHY: Level 1 starts top-left (60,60). Level 2 starts top-right (740,60).
-    this.add.rectangle(cfg.startX, cfg.startY, 40, 40, 0x00cc55, 0.5);
+     createThemedStart(this, cfg.startX, cfg.startY);
 
 
     // ── 5. Exit zone (static body — needed for overlap detection) ─────────────
@@ -506,7 +492,7 @@ export default class MazeScene extends Phaser.Scene {
     // (740, 540) sits comfortably inside, clear of the x=600 and x=800 walls.
     // WHAT: Draw the exit zone at the position from LEVEL_CONFIG.
     // WHY: Level 1 exits bottom-right (740,540). Level 2 exits near top-left (150,50).
-    const exitZone = this.add.rectangle(cfg.exitX, cfg.exitY, 40, 40, 0xffd700, 0.8);
+    const exitZone = createThemedExit(this, cfg.exitX, cfg.exitY);
     
     this.physics.add.existing(exitZone, true); // true = STATIC body
 
@@ -560,7 +546,15 @@ export default class MazeScene extends Phaser.Scene {
     //
     // The player starts at (60, 60) — the centre of the start zone above.
     // WHAT: Create the player at this level's start position.
-    this.player = this.add.rectangle(cfg.startX, cfg.startY, 20, 20, 0x4499ff);
+    this.player = createThemedPlayer(this, cfg.startX, cfg.startY);
+
+    // WHAT: Place enemy mob sprites at key positions (themed only).
+    // WHY: Visual decoration — the actual collision comes from the wall
+    //   segments that form the diamond shapes in the maze data.
+    const enemyPositions = this.game._currentLevel === 2
+      ? [{ x: 120, y: 295 }, { x: 325, y: 220 }, { x: 523, y: 97 }, { x: 625, y: 190 }]
+      : [];
+    placeThemedEnemies(this, enemyPositions);
 
     // Register the rectangle as a DYNAMIC physics body.
     // Omitting the second argument (or passing `false`) = dynamic.
@@ -942,7 +936,8 @@ export default class MazeScene extends Phaser.Scene {
       // (May be shorter than `distance` if a wall stopped the player early.)
       // WHY never clear trailGfx? The trail is permanent history. This contrasts
       // with arrowGfx / playerIndicatorGfx, which ARE cleared on every redraw.
-      this.trailGfx.lineStyle(1.5, 0x88aaff, 0.45); // semi-transparent blue
+      const trail = getTrailStyle(this._themed);
+      this.trailGfx.lineStyle(trail.width, trail.color, trail.alpha);
       this.trailGfx.beginPath();
       this.trailGfx.moveTo(startX, startY);
       this.trailGfx.lineTo(this.player.x, this.player.y);
@@ -1104,7 +1099,7 @@ export default class MazeScene extends Phaser.Scene {
     // `setFillStyle` works on Rectangle game objects created with `this.add.rectangle`.
     // The scene restart will recreate the rectangle in its original blue (#4499ff),
     // so we don't need to manually restore the colour.
-    this.player.setFillStyle(0xff4444);
+    flashPlayerCrash(this.player, this._themed);
 
     // Shake the camera for 350 ms at low intensity.
     // `shake(duration, intensity)`: intensity is in fractions of the camera width
@@ -1267,11 +1262,19 @@ export default class MazeScene extends Phaser.Scene {
     // isMoving has already been set back to false.
     if (this.hasWon || this.isMoving) return;
 
+    // WHAT: Rotate the player sprite to match the facing direction.
+    // WHY: The arrow and triangle already show direction, but rotating
+    //   the character sprite makes it look like the character is physically
+    //   turning — much more natural with a Minecraft-style character.
+    updatePlayerRotation(this.player, angleDeg, this._themed);
+
     // Convert to radians once — all three draws below use the same rad value.
     // Example: angleDeg = 45°  →  rad ≈ 0.785
     //   cos(0.785) ≈ 0.707   (X component, points right)
     //   sin(0.785) ≈ 0.707   (Y component, negated → points UP in Phaser)
     const rad = (angleDeg * Math.PI) / 180;
+
+    
 
     // ── 1. External direction arrow ───────────────────────────────────────────
     //
