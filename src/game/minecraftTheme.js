@@ -43,6 +43,7 @@ const ASSETS = {
   player: '/assets/player.png',
   enemy:  '/assets/enemy.png',
   exit:   '/assets/exit.png',
+  checkpoint: '/assets/checkpoint.png',
 };
 
 

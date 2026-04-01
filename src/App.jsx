@@ -46,6 +46,20 @@ export default function App() {
   const [facingAngle,  setFacingAngle]  = useState(180);
   const [moveCount,    setMoveCount]    = useState(0);
 
+   /**
+   * WHAT: Remaining lives before checkpoint is lost.
+   * WHY: Displayed in the sidebar as hearts or a number.
+   * HOW: Updated by the _onLivesChanged callback from Phaser.
+   */
+  const [lives, setLives] = useState(5);
+
+  /**
+   * WHAT: Brief message when a checkpoint is saved or lost.
+   * WHY: Feedback so the kid knows something happened.
+   * HOW: Set by _onLivesChanged, auto-cleared after 2 seconds.
+   */
+  const [checkpointMsg, setCheckpointMsg] = useState('');
+
   /**
    * currentLevel — which maze the player is on (1 or 2).
    * WHY in React state?
@@ -154,6 +168,8 @@ export default function App() {
       setPosition({ x: startX, y: startY });
       setFacingAngle(startAngle);
       setMoveCount(0);
+      setLives(gameRef.current?._lives ?? 5);
+      setCheckpointMsg('');
 
       const level = gameRef.current?._currentLevel ?? 1;
       setCurrentLevel(level);
@@ -162,6 +178,37 @@ export default function App() {
         setEncourageMsg('Try again! You got this!');
         setTimeout(() => setEncourageMsg(''), 3000);
       }
+    };
+
+    /**
+     * _onLivesChanged(newLives, checkpointLabel)
+     *
+     * WHAT: Called by MazeScene whenever lives change or a checkpoint is activated.
+     *
+     * @param {number} newLives  The new lives count (1-5).
+     * @param {string|null} checkpointLabel  If a checkpoint was just activated,
+     *   its label string. If lives decreased (crash), null.
+     */
+    gameRef.current._onLivesChanged = (newLives, checkpointLabel) => {
+      setLives(newLives);
+      if (checkpointLabel) {
+        setCheckpointMsg(`✓ ${checkpointLabel}`);
+        setTimeout(() => setCheckpointMsg(''), 2000);
+      }
+    };
+
+    /**
+     * _onRespawn(x, y)
+     *
+     * WHAT: Called after a soft respawn (teleport to checkpoint).
+     *   Updates React's position display and re-enables buttons.
+     *
+     * @param {number} x  New player X position.
+     * @param {number} y  New player Y position.
+     */
+    gameRef.current._onRespawn = (x, y) => {
+      setPosition({ x: Math.round(x), y: Math.round(y) });
+      setDisabled(false);
     };
 
     return () => {
@@ -582,6 +629,36 @@ export default function App() {
             <div>Position: ({position.x}, {position.y})</div>
             <div>Facing: {facingAngle}°{facingLabel(facingAngle)}</div>
             <div>Moves: {moveCount}</div>
+
+            {/* ── Lives display ─────────────────────────────────────────────── */}
+            {/*
+              WHAT: Shows remaining lives as filled (♥) and empty (♡) hearts.
+              WHY: Hearts are universally understood by kids — more intuitive
+                than "Lives: 3/5". The red color draws attention when lives
+                are low.
+              HOW: String.repeat() creates the right number of each character.
+                Color shifts from green (5 lives) to yellow (3) to red (1).
+            */}
+            <div style={{
+              marginTop: '6px',
+              fontSize: '18px',
+              color: lives >= 4 ? '#55dd77' : lives >= 2 ? '#ddaa33' : '#ff4444',
+              letterSpacing: '2px',
+            }}>
+              {'♥'.repeat(lives)}{'♡'.repeat(5 - lives)}
+            </div>
+
+            {/* ── Checkpoint message ─────────────────────────────────────── */}
+            {checkpointMsg && (
+              <div style={{
+                marginTop: '4px',
+                fontSize: '12px',
+                color: '#55dd77',
+                fontWeight: 'bold',
+              }}>
+                {checkpointMsg}
+              </div>
+            )}
           </div>
 
         </div>

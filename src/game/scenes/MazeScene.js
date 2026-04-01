@@ -20,6 +20,10 @@ import Phaser from 'phaser';
 import wallsLevel1 from '../mazeData.js';
 import wallsLevel2 from '../mazeDataLevel2.js';
 
+// WHAT: Import checkpoint positions for each level.
+// WHY: Checkpoints are level-specific — each maze has different save points.
+import checkpointsByLevel from '../checkpointData.js';
+
 import {
   preloadThemeAssets, isThemeLoaded,
   drawThemedBackground, drawThemedBorder, drawThemedWalls,
@@ -732,6 +736,51 @@ export default class MazeScene extends Phaser.Scene {
     //   ignored rather than triggering another reset or a partial move.
     this.isResetting = false;
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // CHECKPOINT + LIVES STATE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * WHAT: Lives remaining before checkpoint is revoked.
+     *
+     * WHY on this.game instead of this?
+     *   `this` is the scene instance — destroyed on scene.restart().
+     *   `this.game` survives restarts. Lives must persist across the
+     *   "full restart" that happens when all lives are lost.
+     *
+     * HOW: Starts at 5. Decremented on each wall crash. Reset to 5
+     *   when a new checkpoint is activated or when all lives are lost.
+     */
+    if (this.game._lives === undefined) {
+      this.game._lives = 5;
+    }
+
+    /**
+     * WHAT: The currently active checkpoint (respawn point).
+     *   null = no checkpoint active, respawn at maze start.
+     *   { id, x, y } = respawn at this checkpoint's position.
+     *
+     * WHY on this.game?
+     *   Must survive both soft respawns (teleport) and hard restarts
+     *   (scene.restart when lives run out). Only cleared explicitly
+     *   when lives hit 0.
+     */
+    if (this.game._activeCheckpoint === undefined) {
+      this.game._activeCheckpoint = null;
+    }
+
+    /**
+     * WHAT: Set of checkpoint IDs that have been activated at least once.
+     *   Used to render checkpoints in the "passed" visual state.
+     *
+     * WHY a Set?
+     *   Fast O(1) lookup: `activatedSet.has(id)`.
+     *   No duplicates: activating the same checkpoint twice doesn't grow it.
+     */
+    if (this.game._activatedCheckpoints === undefined) {
+      this.game._activatedCheckpoints = new Set();
+    }
+
     // Reference to the active goForward timer (a Phaser.Time.TimerEvent).
     // WHY store it?
     //   If the player hits a wall MID-move, we must cancel the pending stop
@@ -786,6 +835,83 @@ export default class MazeScene extends Phaser.Scene {
       }).setOrigin(0.5);
     });
 
+     // ═══════════════════════════════════════════════════════════════════════
+    // CHECKPOINTS — visual markers + physics overlap zones
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * WHAT: Create checkpoint markers and their overlap zones.
+     *
+     * WHY separate sprites and physics zones?
+     *   The sprite is the visible flag/beacon marker.
+     *   The physics zone is an invisible rectangle for overlap detection.
+     *   They must be separate because:
+     *   - The sprite needs tinting to show state (inactive/active/passed).
+     *   - The physics zone needs a fixed size for consistent hit detection.
+     *
+     * HOW: For each checkpoint in the current level's data:
+     *   1. Create a sprite (visible marker).
+     *   2. Create an invisible rectangle with a static physics body.
+     *   3. Add an overlap detector between the player and the zone.
+     *   4. Tint the sprite based on whether it's inactive, active, or passed.
+     */
+    const levelCheckpoints = checkpointsByLevel[this.game._currentLevel] || [];
+
+    // Store sprite references so we can update tints when state changes.
+    this._checkpointSprites = {};
+
+    levelCheckpoints.forEach((cp) => {
+      // ── Visible sprite ──────────────────────────────────────────────────
+      const themed = this.textures.exists('checkpoint');
+      let sprite;
+
+      if (themed) {
+        sprite = this.add.sprite(cp.x, cp.y, 'checkpoint')
+          .setDisplaySize(36, 36)
+          .setDepth(3);
+      } else {
+        // Fallback: small colored diamond
+        sprite = this.add.rectangle(cp.x, cp.y, 20, 20, 0xffffff, 0.6)
+          .setDepth(3);
+        // Rotate 45° to look like a diamond shape
+        sprite.setAngle(45);
+      }
+
+      // ── Set initial tint based on state ─────────────────────────────────
+      //
+      // WHAT: Three visual states for checkpoints:
+      //   INACTIVE: not yet reached — dimmed (gray tint)
+      //   ACTIVE:   current respawn point — bright green glow
+      //   PASSED:   reached before but not the current respawn — yellow tint
+      //
+      // WHY tint instead of different images?
+      //   Tinting one image is simpler than loading 3 separate images.
+      //   Phaser's setTint() multiplies the texture color by the tint color
+      //   — so 0xffffff = original colors, 0x888888 = dimmed, 0x00ff00 = green.
+      const isActive = this.game._activeCheckpoint?.id === cp.id;
+      const isPassed = this.game._activatedCheckpoints.has(cp.id);
+
+      if (isActive) {
+        sprite.setTint(0x00ff66);       // bright green = current respawn
+      } else if (isPassed) {
+        sprite.setTint(0xffcc00);       // yellow = previously activated
+      } else {
+        sprite.setTint(0x666666);       // gray = not yet reached
+        sprite.setAlpha(0.6);
+      }
+
+      this._checkpointSprites[cp.id] = sprite;
+
+      // ── Invisible physics zone for overlap detection ────────────────────
+      const zone = this.add.rectangle(cp.x, cp.y, 30, 30);
+      zone.setVisible(false);
+      this.physics.add.existing(zone, true); // static body
+
+      // ── Overlap: player reaches this checkpoint ─────────────────────────
+      this.physics.add.overlap(this.player, zone, () => {
+        this._onCheckpointReached(cp);
+      });
+    });
 
     // ── 11. Coordinate display ─────────────────────────────────────────────────
     //
@@ -1028,132 +1154,158 @@ export default class MazeScene extends Phaser.Scene {
     return this.facingAngle;
   }
 
-  /**
-   * _onWallHit(playerObj, wallObj)
+   /**
+   * _onWallHit(_player, _wall)
    *
-   * WHAT: Collider callback — called by Phaser every frame the player's body
-   *   overlaps any wall body. When triggered, it:
-   *     1. Immediately stops the player and cancels any pending move timer.
-   *     2. Shows a kid-friendly "Oops!" message on the canvas.
-   *     3. Shakes the camera and flashes the player red for visual feedback.
-   *     4. Waits 2 seconds, then calls `this.scene.restart()` to reset everything.
+   * WHAT: Called when the player touches a wall. Now implements the lives
+   *   system instead of immediately restarting the scene.
    *
-   * HOW collider callbacks work in Phaser:
-   *   `physics.add.collider(A, B, callback, processCallback, context)`
-   *   Phaser calls `callback(A, B)` AFTER resolving the collision (i.e. after
-   *   pushing the player out of the wall). The two arguments are the game
-   *   objects (or physics bodies, depending on how A and B were created).
-   *   We don't need them here — we already have `this.player`.
+   * TWO PATHS:
+   *   lives > 1 → SOFT RESPAWN: lose 1 life, teleport to checkpoint (or start).
+   *     The scene stays intact — trail, walls, checkpoints all preserved.
+   *     The player is moved back to the respawn point instantly.
    *
-   * WHY the `isResetting` guard?
-   *   The collider fires EVERY FRAME that two bodies overlap — not just once.
-   *   Without the guard, "Oops!" text would be added ~60 times per second,
-   *   and `scene.restart()` would be scheduled 60 times per second.
-   *   The flag ensures the callback only has full effect once.
+   *   lives == 1 → HARD RESTART: lose all checkpoint progress.
+   *     "Checkpoint lost!" message, then scene.restart() after 2 seconds.
+   *     Lives reset to 5, active checkpoint cleared.
    *
-   * HOW `this.scene.restart()` works:
-   *   Phaser destroys the current scene — removing all game objects, timers,
-   *   physics bodies, and graphics — then creates a completely fresh instance
-   *   by running `preload()` → `create()` again. It is effectively a full
-   *   reset back to the initial game state, as if the page was reloaded.
-   *   Any data you want to survive must be stored outside the scene (e.g. on
-   *   `this.game`, or in React state).
-   *
-   * @param {Phaser.GameObjects.GameObject} _player  The player game object (unused — we have `this.player`).
-   * @param {Phaser.GameObjects.GameObject} _wall    The wall game object that was hit (unused).
+   * WHY soft respawn instead of scene.restart()?
+   *   Kids need to see their trail to learn from mistakes. If the scene
+   *   restarted every time, the trail would vanish and they'd lose context.
+   *   Soft respawn keeps the trail visible, shows which checkpoints they've
+   *   passed, and only costs 1 life — much more forgiving and educational.
    */
   _onWallHit(_player, _wall) {
-
-    // Guard: only react to the FIRST frame of contact.
-    // `isResetting` prevents every subsequent frame from piling up more
-    // "Oops!" messages and scheduling multiple restarts simultaneously.
-    // `hasWon` prevents the crash handler from firing on the exit zone
-    // (which doesn't use a collider, but just in case of edge overlaps).
     if (this.isResetting || this.hasWon) return;
-    this.isResetting = true;
 
-    // ── Step 1: Stop all motion ───────────────────────────────────────────────
-
-    // Halt the player immediately.
+    // ── Stop all motion ─────────────────────────────────────────────────
     this.player.body.setVelocity(0, 0);
-
-    // Cancel the goForward stop-timer if one is active.
-    // WHY: goForward schedules a `delayedCall` to stop the player and draw the
-    // trail after N milliseconds. If we hit a wall mid-move, that timer is
-    // still scheduled. Without cancellation, its callback would fire after
-    // scene.restart() — trying to draw on destroyed graphics objects.
-    // `remove()` dequeues the event without dispatching the callback. ✓
     this._moveTimer?.remove();
     this._moveTimer = null;
     this.isMoving = false;
 
-    // ── Step 2: Notify React ──────────────────────────────────────────────────
+    // ── Camera shake (both paths) ───────────────────────────────────────
+    this.cameras.main.shake(250, 0.007);
 
-    // Disable React's action buttons so the kid can't keep clicking during
-    // the 2-second crash delay. React stores a callback on the game object.
-    this.game._onCrash?.();
+    // ── Decrement lives ─────────────────────────────────────────────────
+    this.game._lives -= 1;
 
-    // ── Step 3: Visual effects ────────────────────────────────────────────────
+    if (this.game._lives > 0) {
+      // ══════════════════════════════════════════════════════════════════
+      // SOFT RESPAWN — teleport to checkpoint, keep the scene alive
+      // ══════════════════════════════════════════════════════════════════
 
-    // Flash the player red — immediate visual feedback that something happened.
-    // `setFillStyle` works on Rectangle game objects created with `this.add.rectangle`.
-    // The scene restart will recreate the rectangle in its original blue (#4499ff),
-    // so we don't need to manually restore the colour.
-    flashPlayerCrash(this.player, this._themed);
+      this.isResetting = true; // prevent multiple triggers
 
-    // Shake the camera for 350 ms at low intensity.
-    // `shake(duration, intensity)`: intensity is in fractions of the camera width
-    // (0.009 ≈ 7 px at 800 px wide — noticeable but not nauseating for kids).
-    this.cameras.main.shake(350, 0.009);
+      // Notify React to disable buttons briefly and update lives.
+      this.game._onCrash?.();
+      this.game._onLivesChanged?.(this.game._lives, null);
 
-    // Clear the direction arrow — it would look wrong pointing from a red,
-    // stationary player while the "Oops!" message is showing.
-    this.arrowGfx.clear();
-    this.playerIndicatorGfx.clear();
+      // Flash player red briefly
+      if (this.player.setTint) {
+        this.player.setTint(0xff4444);
+      } else if (this.player.setFillStyle) {
+        this.player.setFillStyle(0xff4444);
+      }
 
-    // ── Step 4: Show the Oops message ─────────────────────────────────────────
+      // ── Show "Oops!" with lives count ─────────────────────────────────
+      const heartsStr = '♥'.repeat(this.game._lives) + '♡'.repeat(5 - this.game._lives);
+      const oopsMsg = this.add.text(400, 280, `Oops!  ${heartsStr}`, {
+        fontSize: '28px',
+        fontStyle: 'bold',
+        color: '#ff8844',
+        fontFamily: 'monospace',
+        backgroundColor: '#000000bb',
+        padding: { x: 16, y: 10 },
+      }).setOrigin(0.5).setDepth(20);
 
-    // Two-line message stacked vertically on the canvas, centred at (400, *).
-    // Warm orange/red text on a semi-transparent dark background.
-    // `setOrigin(0.5)` centres each text object at its own midpoint.
-    this.add.text(400, 255, 'Oops!', {
-      fontSize: '52px',
-      fontStyle: 'bold',
-      color: '#ff8844',
-      fontFamily: 'monospace',
-      backgroundColor: '#00000099',
-      padding: { x: 24, y: 12 },
-    }).setOrigin(0.5);
+      // ── Determine respawn position ──────────────────────────────────────
+      const cfg = LEVEL_CONFIG[this.game._currentLevel] || LEVEL_CONFIG[1];
+      const respawn = this.game._activeCheckpoint
+        ? { x: this.game._activeCheckpoint.x, y: this.game._activeCheckpoint.y }
+        : { x: cfg.startX, y: cfg.startY };
 
-    this.add.text(400, 330, 'You touched a wall!', {
-      fontSize: '22px',
-      color: '#ffbbaa',
-      fontFamily: 'monospace',
-      backgroundColor: '#00000099',
-      padding: { x: 16, y: 8 },
-    }).setOrigin(0.5);
+      // ── Teleport after 1 second ─────────────────────────────────────────
+      this.time.delayedCall(1000, () => {
+        // Move player to respawn point
+        this.player.setPosition(respawn.x, respawn.y);
+        this.player.body.reset(respawn.x, respawn.y);
 
-    this.add.text(400, 380, 'Try a different path next time...', {
-      fontSize: '15px',
-      color: '#aa7766',
-      fontFamily: 'monospace',
-      backgroundColor: '#00000099',
-      padding: { x: 12, y: 6 },
-    }).setOrigin(0.5);
+        // Clear the red flash
+        if (this.player.clearTint) {
+          this.player.clearTint();
+        } else if (this.player.setFillStyle) {
+          this.player.setFillStyle(0x4499ff);
+        }
 
-    // ── Step 5: Restart after 2 seconds ──────────────────────────────────────
+        // Remove the Oops message
+        oopsMsg.destroy();
 
-    // WHY 2 seconds?
-    //   Long enough to read the message and understand what happened.
-    //   Short enough not to feel like a punishment — this is an encouraging
-    //   retry pause, not a penalty screen.
-    //
-    // `this.scene.restart()` inside a delayedCall is safe: the timer is owned
-    // by the scene's clock, so it fires on the correct Phaser frame and the
-    // scene system handles teardown cleanly.
-    this.time.delayedCall(2000, () => {
-      this.scene.restart();
-    });
+        // Restore direction indicators
+        this.setPreviewAngle(this.facingAngle);
+
+        // Re-enable input
+        this.isResetting = false;
+        this.game._onRespawn?.(respawn.x, respawn.y);
+      });
+
+    } else {
+      // ══════════════════════════════════════════════════════════════════
+      // HARD RESTART — all lives lost, checkpoint revoked
+      // ══════════════════════════════════════════════════════════════════
+
+      this.isResetting = true;
+
+      // Revoke checkpoint and reset lives
+      this.game._activeCheckpoint = null;
+      this.game._lives = 5;
+      // Keep _activatedCheckpoints so they show as "passed" visually.
+
+      // Notify React
+      this.game._onCrash?.();
+
+      // Flash player red
+      if (this.player.setTint) {
+        this.player.setTint(0xff4444);
+      } else if (this.player.setFillStyle) {
+        this.player.setFillStyle(0xff4444);
+      }
+
+      // Clear direction indicators
+      this.arrowGfx.clear();
+      this.playerIndicatorGfx.clear();
+
+      // ── Show "Checkpoint lost!" messages ─────────────────────────────
+      this.add.text(400, 240, 'All lives lost!', {
+        fontSize: '36px',
+        fontStyle: 'bold',
+        color: '#ff4444',
+        fontFamily: 'monospace',
+        backgroundColor: '#000000bb',
+        padding: { x: 20, y: 12 },
+      }).setOrigin(0.5).setDepth(20);
+
+      this.add.text(400, 310, 'Checkpoint lost!', {
+        fontSize: '24px',
+        color: '#ff8866',
+        fontFamily: 'monospace',
+        backgroundColor: '#000000bb',
+        padding: { x: 16, y: 8 },
+      }).setOrigin(0.5).setDepth(20);
+
+      this.add.text(400, 365, 'Returning to start...', {
+        fontSize: '16px',
+        color: '#aa7766',
+        fontFamily: 'monospace',
+        backgroundColor: '#000000bb',
+        padding: { x: 12, y: 6 },
+      }).setOrigin(0.5).setDepth(20);
+
+      // ── Full scene restart after 2 seconds ────────────────────────────
+      this.time.delayedCall(2000, () => {
+        this.scene.restart();
+      });
+    }
   }
 
   /**
@@ -1189,6 +1341,13 @@ export default class MazeScene extends Phaser.Scene {
     // Notify React to disable buttons immediately.
     this.game._onCrash?.();
 
+    // WHAT: Clear checkpoint progress on voluntary restart.
+    // WHY: "Start Over" means start over completely — don't carry over
+    //   checkpoint positions from a previous attempt.
+    this.game._activeCheckpoint = null;
+    this.game._activatedCheckpoints = new Set();
+    this.game._lives = 5;
+
     // Restart right away — no delay for voluntary action.
     this.scene.restart();
   }
@@ -1222,10 +1381,88 @@ export default class MazeScene extends Phaser.Scene {
 
     // Notify React to disable buttons.
     this.game._onCrash?.();
+    
+    // WHAT: Clear checkpoint progress on voluntary restart.
+    // WHY: "Start Over" means start over completely — don't carry over
+    //   checkpoint positions from a previous attempt.
+    this.game._activeCheckpoint = null;
+    this.game._activatedCheckpoints = new Set();
+    this.game._lives = 5;
 
     // Restart with the new level data.
     this.scene.restart();
   }
+
+    /**
+   * _onCheckpointReached(checkpoint)
+   *
+   * WHAT: Called when the player's body overlaps a checkpoint zone.
+   *   Activates the checkpoint as the new respawn point and refills lives.
+   *
+   * WHY check if it's already active?
+   *   The overlap fires EVERY FRAME the player is inside the zone.
+   *   Without the guard, we'd reset lives to 5 sixty times per second
+   *   while the player stands on the checkpoint.
+   *
+   * HOW state changes:
+   *   1. Set this checkpoint as the active respawn point.
+   *   2. Add its ID to the activated set (for visual state tracking).
+   *   3. Reset lives to 5.
+   *   4. Update all checkpoint sprite tints to reflect the new state.
+   *   5. Notify React to update the lives display.
+   *   6. Show a brief "Checkpoint saved!" message on canvas.
+   *
+   * @param {{ id: number, x: number, y: number, label: string }} checkpoint
+   */
+  _onCheckpointReached(checkpoint) {
+    // Guard: don't re-activate the already-active checkpoint.
+    if (this.game._activeCheckpoint?.id === checkpoint.id) return;
+    // Guard: don't activate during win/reset states.
+    if (this.hasWon || this.isResetting) return;
+
+    // ── Update game state ───────────────────────────────────────────────
+    this.game._activeCheckpoint = checkpoint;
+    this.game._activatedCheckpoints.add(checkpoint.id);
+    this.game._lives = 5;
+
+    // ── Update all checkpoint sprite tints ───────────────────────────────
+    const levelCheckpoints = checkpointsByLevel[this.game._currentLevel] || [];
+    levelCheckpoints.forEach((cp) => {
+      const sprite = this._checkpointSprites[cp.id];
+      if (!sprite) return;
+
+      if (cp.id === checkpoint.id) {
+        sprite.setTint(0x00ff66);     // bright green = active
+        sprite.setAlpha(1);
+      } else if (this.game._activatedCheckpoints.has(cp.id)) {
+        sprite.setTint(0xffcc00);     // yellow = passed
+        sprite.setAlpha(1);
+      }
+      // Inactive checkpoints keep their gray tint (set in create).
+    });
+
+    // ── Notify React ────────────────────────────────────────────────────
+    this.game._onLivesChanged?.(this.game._lives, checkpoint.label);
+
+    // ── Brief canvas message ────────────────────────────────────────────
+    const msg = this.add.text(400, 500, `✓ ${checkpoint.label} saved!`, {
+      fontSize: '16px',
+      color: '#00ff66',
+      fontFamily: 'monospace',
+      backgroundColor: '#00000088',
+      padding: { x: 10, y: 6 },
+    }).setOrigin(0.5).setDepth(20);
+
+    // Fade out and destroy after 1.5 seconds
+    this.tweens.add({
+      targets: msg,
+      alpha: 0,
+      duration: 800,
+      delay: 700,
+      onComplete: () => msg.destroy(),
+    });
+  }
+
   /**
    * setPreviewAngle(angleDeg)
    *

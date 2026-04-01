@@ -199,7 +199,7 @@ const walls = [
     x2: 700, y2: 330 },
 
   { x1: 700, y1: 330, 
-    x2: 630, y2: 500 }, 
+    x2: 670, y2: 430 }, 
 
     
 
@@ -247,18 +247,7 @@ const walls = [
   // Check points
   // ═══════════════════════════════════════════════════════════════════════════           
   //    
-  // First from right to left.  
-  { x1: 650, y1: 550, 
-    x2: 651, y2: 551 },
-  // Second from right to left.  
-  { x1: 450, y1: 340, 
-    x2: 451, y2: 341 },
-  // Third from right to left.  
-  { x1: 200, y1: 180, 
-    x2: 201, y2: 181 },
-  // Fourth from right to left.  
-  { x1: 460, y1: 500, 
-    x2: 461, y2: 501 },
+  
 ];
 
 export default walls;
