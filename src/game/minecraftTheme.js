@@ -370,33 +370,97 @@ export function placeThemedEnemies(scene, positions) {
 
 
 /**
- * updatePlayerRotation(player, facingAngle, themed)
+ * updatePlayerRotation(player, facingAngle, themed, scene)
  *
- * WHAT: Rotates the player sprite to match the current facing direction.
- *   Only applies to Sprite objects (themed mode). Rectangle objects
- *   (fallback mode) don't rotate — the arrow indicator handles direction.
+ * WHAT: Smoothly rotates the player sprite to match the new facing direction
+ *   using a Phaser tween instead of an instant snap.
  *
- * HOW the angle conversion works:
- *   Game angles:  0° = right, 90° = up (CCW positive, math convention)
- *   Phaser angles: 0° = right (but we want up as default, CW positive)
+ * WHY animate instead of instant?
+ *   Instant rotation (setAngle) jumps from 0° to 90° in one frame — it looks
+ *   robotic and disorienting, especially with a character sprite. A short
+ *   tween (200ms) shows the character physically turning, which:
+ *     - Feels natural and alive
+ *     - Gives the kid visual confirmation that the turn happened
+ *     - Makes large turns (180°) feel appropriately dramatic
  *
- *   If the player image faces UP in the PNG file:
- *     Phaser rotation = -(facingAngle - 90) = 90 - facingAngle
+ * HOW the tween works:
+ *   Phaser's tween system interpolates a property from its current value
+ *   to a target value over a duration. We tween `player.angle` (Phaser's
+ *   internal rotation in degrees).
  *
- *   Examples:
- *     facingAngle = 0°  (right)  → phaserAngle = 90°  (rotated 90° CW from up)
- *     facingAngle = 90° (up)     → phaserAngle = 0°   (no rotation = up)
- *     facingAngle = 180° (left)  → phaserAngle = -90° (rotated 90° CCW)
- *     facingAngle = 270° (down)  → phaserAngle = -180° (flipped)
+ *   The tricky part is DIRECTION. We want the sprite to take the SHORTEST
+ *   path around the circle. Without correction:
+ *     0° → 350° would rotate 350° clockwise instead of 10° counterclockwise.
+ *
+ *   We fix this by computing the shortest angular difference (always between
+ *   -180° and +180°) and tweening by that delta from the current angle.
+ *
+ * WHY `scene` parameter?
+ *   Phaser tweens are created via `scene.tweens.add()`. The previous version
+ *   didn't need the scene because setAngle() is a direct property setter.
+ *   Tweens require the scene's tween manager.
  *
  * @param {Phaser.GameObjects.Sprite|Phaser.GameObjects.Rectangle} player
- * @param {number} facingAngle  The game's facing angle in degrees.
- * @param {boolean} themed  Whether the theme is active.
+ * @param {number} facingAngle  The game's facing angle (0°=right, 90°=up, CCW positive).
+ * @param {boolean} themed      Whether the theme is active (sprites vs rectangles).
+ * @param {Phaser.Scene} scene  The active scene (needed for scene.tweens.add).
  */
-export function updatePlayerRotation(player, facingAngle, themed) {
-  if (themed && player.setAngle) {
-    player.setAngle(90 - facingAngle);
+export function updatePlayerRotation(player, facingAngle, themed, scene) {
+  if (!themed || !player.setAngle || !scene) return;
+
+  // WHAT: Convert game angle to Phaser angle.
+  //   Game:   0°=right, 90°=up, CCW positive (math convention)
+  //   Phaser: 0°=right, 90°=down, CW positive (screen convention)
+  //   If the player sprite faces UP in the PNG: phaserTarget = 90 - facingAngle
+  const targetAngle = 90 - facingAngle;
+
+  // WHAT: Calculate the shortest rotation path.
+  //
+  // WHY: Without this, going from 10° to 350° would rotate 340° the long way
+  //   around. We want it to rotate -20° (the short way).
+  //
+  // HOW:
+  //   1. Compute the raw difference: target - current.
+  //   2. Normalize to [-180, +180] using the modulo trick.
+  //      This guarantees the tween always takes the shortest path.
+  //
+  // Example:
+  //   current = 80°, target = 350°
+  //   raw diff = 350 - 80 = 270°
+  //   normalized = ((270 + 180) % 360) - 180 = (450 % 360) - 180 = 90 - 180 = -90°
+  //   → rotates 90° counterclockwise (short path) ✓
+  const currentAngle = player.angle;
+  const rawDiff = targetAngle - currentAngle;
+  const shortestDiff = ((rawDiff + 180) % 360 + 360) % 360 - 180;
+
+  // WHAT: The actual angle to tween TO (current + shortest difference).
+  const tweenTarget = currentAngle + shortestDiff;
+
+  // WHAT: Kill any existing rotation tween before starting a new one.
+  // WHY: If the kid clicks Turn Left twice quickly, the first tween might
+  //   still be running. Without stopping it, the two tweens would fight
+  //   over the angle property, causing jittery flickering.
+  // HOW: We store the tween reference on the player object itself (a
+  //   convenient place that survives between calls). If a previous tween
+  //   exists and is still running, stop() halts it immediately.
+  if (player._rotationTween) {
+    player._rotationTween.stop();
   }
+
+  // WHAT: Create the smooth rotation tween.
+  // HOW:
+  //   targets: the game object whose property we're animating.
+  //   angle: the target value for player.angle.
+  //   duration: 200ms — fast enough to feel responsive, slow enough to see.
+  //   ease: 'Sine.easeInOut' — starts slow, speeds up in the middle, slows
+  //     down at the end. This mimics how a physical object turns — it
+  //     accelerates then decelerates, not instant constant speed.
+  player._rotationTween = scene.tweens.add({
+    targets: player,
+    angle: tweenTarget,
+    duration: 200,
+    ease: 'Sine.easeInOut',
+  });
 }
 
 

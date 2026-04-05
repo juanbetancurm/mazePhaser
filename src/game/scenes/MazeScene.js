@@ -1507,12 +1507,10 @@ export default class MazeScene extends Phaser.Scene {
     // isMoving has already been set back to false.
     if (this.hasWon || this.isMoving) return;
 
-    // WHAT: Rotate the player sprite to match the facing direction.
-    // WHY: The arrow and triangle already show direction, but rotating
-    //   the character sprite makes it look like the character is physically
-    //   turning — much more natural with a Minecraft-style character.
-    updatePlayerRotation(this.player, angleDeg, this._themed);
-
+    // WHAT: Smoothly rotate the player sprite to the new facing direction.
+    // WHY: Pass `this` (the scene) so the function can create a Phaser tween.
+    updatePlayerRotation(this.player, angleDeg, this._themed, this);
+    
     // Convert to radians once — all three draws below use the same rad value.
     // Example: angleDeg = 45°  →  rad ≈ 0.785
     //   cos(0.785) ≈ 0.707   (X component, points right)
