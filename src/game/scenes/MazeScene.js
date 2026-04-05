@@ -114,7 +114,7 @@ const TILE_SIZE = 8;
  */
 const LEVEL_CONFIG = {
   1: {
-    startX: 60,         // top-left area (same as before)
+    startX: 60,         // top-left area (same as before) 
     startY: 60,
     exitX: 740,         // bottom-right area (same as before)
     exitY: 540,
@@ -339,35 +339,26 @@ export default class MazeScene extends Phaser.Scene {
     //   we fall back to the original flat-color rendering.
     //   Every themed rendering function checks this flag.
     this._themed = isThemeLoaded(this);
-    
-    // WHAT: Read the position/angle config for the current level.
-    // WHY: Every level can have different start, exit, and facing direction.
-    // HOW: LEVEL_CONFIG is a lookup table defined at the top of this file.
-    //   If the current level has no config entry, fall back to Level 1's
-    //   settings — this prevents a crash if you forget to add config for
-    //   a new level.
+
+    // ── Level selection — MUST come FIRST ──────────────────────────────
+    //
+    // WHY this must be the first thing in create():
+    //   Everything below depends on knowing which level we're on:
+    //   cfg (positions), wall data, checkpoint data. If we read cfg
+    //   before setting _currentLevel, the level is undefined on first
+    //   load and cfg falls back to Level 1 every time.
+    //
+    // ORDER MATTERS:
+    //   1. Set _currentLevel  ← must be first
+    //   2. Read cfg from LEVEL_CONFIG  ← uses _currentLevel
+    //   3. Notify React (_onReset)  ← uses cfg
+    //   4. Everything else  ← uses cfg and _currentLevel
+    if (this.game._currentLevel === undefined) {
+      this.game._currentLevel = window.__anglemazeInitialLevel || 1;
+    }
+
     const cfg = LEVEL_CONFIG[this.game._currentLevel] || LEVEL_CONFIG[1];
-    
- 
-    // ── Scene-restart detection ────────────────────────────────────────────
-    
-    // WHAT: Notify React when the scene starts or restarts.
-    //
-    // WHY pass `cfg`?
-    //   React holds its own copies of position and facingAngle (useState).
-    //   Phaser's scene restart resets Phaser's state, but React's state is
-    //   completely separate. We must tell React what the starting values are
-    //   for THIS level. Before this change, React always reset to (60,60)
-    //   and 0° — wrong for Level 2 which starts at (740,60) facing 180°.
-    //
-    // HOW: _onReset receives (wasRestart, cfg):
-    //   wasRestart = true if this is a scene restart, false on first load.
-    //   cfg = the LEVEL_CONFIG entry with startX, startY, facingAngle, etc.
-    //
-    // NOTE: We must read `cfg` AFTER the level selection code above has run
-    //   (Spot A). That's why the restart detection was moved below the
-    //   level selection. If your code still has this block ABOVE the level
-    //   selection, move the whole block to AFTER the `const cfg = ...` line.
+
     if (this.game._hasStarted) {
       this.game._onReset?.(true, cfg);
     } else {
@@ -376,19 +367,12 @@ export default class MazeScene extends Phaser.Scene {
     }
 
     // ── 0b. Level selection ─────────────────────────────────────────────────
-    //
-    // WHAT: Choose which set of walls to use based on the current level.
-    //
-    // WHY store currentLevel on `this.game` instead of `this`?
-    //   `this` = the scene instance. It gets DESTROYED on scene.restart().
-    //   `this.game` = the Phaser.Game instance. It survives all restarts.
-    //   So `this.game._currentLevel` persists even when the scene resets.
-    //
-    // HOW: Default to level 1 if no level has been set yet.
-    //   The React UI calls scene.setLevel(n) to change it.
+    // WHAT: Read the initial level from the URL (set by GamePage before game starts)
+    //   or keep the current level on scene restarts.
     if (this.game._currentLevel === undefined) {
-      this.game._currentLevel = 1;
+      this.game._currentLevel = window.__anglemazeInitialLevel || 1;
     }
+
 
     // Pick the wall data array for the current level.
     const walls = this.game._currentLevel === 2 ? wallsLevel2 : wallsLevel1;
@@ -735,6 +719,10 @@ export default class MazeScene extends Phaser.Scene {
     //   might click buttons — the flag ensures those clicks are harmlessly
     //   ignored rather than triggering another reset or a partial move.
     this.isResetting = false;
+    // WHAT: True only when a timed scene.restart() or respawn is counting down.
+    // WHY: Allows restartGame() to work during Game Over (where isResetting
+    //   is true but no timed restart is scheduled).
+    this._restartScheduled = false;
 
     // ═══════════════════════════════════════════════════════════════════════
     // CHECKPOINT + LIVES STATE
@@ -833,6 +821,12 @@ export default class MazeScene extends Phaser.Scene {
         backgroundColor: '#00000099',
         padding: { x: 24, y: 12 },
       }).setOrigin(0.5);
+
+      // WHAT: Notify React that this level was completed.
+      // WHY: React updates the GameContext (marks level done, unlocks next)
+      //   and navigates back to the level menu.
+      // HOW: The callback is stored on this.game by GamePage.jsx's useEffect.
+      this.game._onLevelWin?.(this.game._currentLevel);
     });
 
      // ═══════════════════════════════════════════════════════════════════════
@@ -1226,6 +1220,7 @@ export default class MazeScene extends Phaser.Scene {
         : { x: cfg.startX, y: cfg.startY };
 
       // ── Teleport after 1 second ─────────────────────────────────────────
+      this._restartScheduled = true;
       this.time.delayedCall(1000, () => {
         // Move player to respawn point
         this.player.setPosition(respawn.x, respawn.y);
@@ -1246,23 +1241,34 @@ export default class MazeScene extends Phaser.Scene {
 
         // Re-enable input
         this.isResetting = false;
+        this._restartScheduled = false;
         this.game._onRespawn?.(respawn.x, respawn.y);
       });
 
     } else {
       // ══════════════════════════════════════════════════════════════════
-      // HARD RESTART — all lives lost, checkpoint revoked
+      // GAME OVER — all 5 lives used up, level is over
+      //
+      // WHAT: The player has exhausted all 5 lives for this level.
+      //   The game stops. No automatic restart. The kid must click
+      //   "Start Over" to try again.
+      //
+      // WHY no automatic restart?
+      //   The prompt says: "Hard stop. Show Game Over and require the
+      //   player to manually restart." This gives the kid a moment to
+      //   reflect on what went wrong before they try again.
+      //
+      // HOW: We set isResetting = true (blocks all further input),
+      //   disable the physics body (no more collisions), and show
+      //   the Game Over screen. The only way out is the "Start Over"
+      //   button in React, which calls restartGame().
       // ══════════════════════════════════════════════════════════════════
 
       this.isResetting = true;
 
-      // Revoke checkpoint and reset lives
-      this.game._activeCheckpoint = null;
-      this.game._lives = 5;
-      // Keep _activatedCheckpoints so they show as "passed" visually.
-
-      // Notify React
+      // Notify React to disable movement buttons and update lives display.
       this.game._onCrash?.();
+      this.game._onLivesChanged?.(0, null);
 
       // Flash player red
       if (this.player.setTint) {
@@ -1271,40 +1277,43 @@ export default class MazeScene extends Phaser.Scene {
         this.player.setFillStyle(0xff4444);
       }
 
+      // Disable physics — no more movement or collisions possible.
+      this.player.body.enable = false;
+
       // Clear direction indicators
       this.arrowGfx.clear();
       this.playerIndicatorGfx.clear();
 
-      // ── Show "Checkpoint lost!" messages ─────────────────────────────
-      this.add.text(400, 240, 'All lives lost!', {
-        fontSize: '36px',
+      // ── Show Game Over messages ───────────────────────────────────────
+      this.add.text(400, 240, 'GAME OVER', {
+        fontSize: '48px',
         fontStyle: 'bold',
         color: '#ff4444',
         fontFamily: 'monospace',
-        backgroundColor: '#000000bb',
-        padding: { x: 20, y: 12 },
+        backgroundColor: '#000000cc',
+        padding: { x: 28, y: 16 },
       }).setOrigin(0.5).setDepth(20);
 
-      this.add.text(400, 310, 'Checkpoint lost!', {
-        fontSize: '24px',
+      this.add.text(400, 320, 'All 5 lives used!', {
+        fontSize: '22px',
         color: '#ff8866',
         fontFamily: 'monospace',
         backgroundColor: '#000000bb',
         padding: { x: 16, y: 8 },
       }).setOrigin(0.5).setDepth(20);
 
-      this.add.text(400, 365, 'Returning to start...', {
-        fontSize: '16px',
-        color: '#aa7766',
+      this.add.text(400, 375, 'Click "Start Over" to try again', {
+        fontSize: '15px',
+        color: '#aa9988',
         fontFamily: 'monospace',
         backgroundColor: '#000000bb',
         padding: { x: 12, y: 6 },
       }).setOrigin(0.5).setDepth(20);
 
-      // ── Full scene restart after 2 seconds ────────────────────────────
-      this.time.delayedCall(2000, () => {
-        this.scene.restart();
-      });
+      // ── NO automatic restart ──────────────────────────────────────────
+      // The scene stays frozen on the Game Over screen.
+      // The only exit is restartGame() via the React "Start Over" button.
+      // restartGame() already resets _lives to 5 and clears checkpoints.
     }
   }
 
@@ -1328,8 +1337,8 @@ export default class MazeScene extends Phaser.Scene {
    */
   restartGame() {
 
-    // Don't stack restarts if one is already in progress.
-    if (this.isResetting) return;
+    // WHAT: Allow restart UNLESS a timed restart is already counting down.
+    if (this._restartScheduled) return;
     this.isResetting = true;
 
     // Stop any active movement.
@@ -1381,7 +1390,7 @@ export default class MazeScene extends Phaser.Scene {
 
     // Notify React to disable buttons.
     this.game._onCrash?.();
-    
+
     // WHAT: Clear checkpoint progress on voluntary restart.
     // WHY: "Start Over" means start over completely — don't carry over
     //   checkpoint positions from a previous attempt.
@@ -1423,7 +1432,6 @@ export default class MazeScene extends Phaser.Scene {
     // ── Update game state ───────────────────────────────────────────────
     this.game._activeCheckpoint = checkpoint;
     this.game._activatedCheckpoints.add(checkpoint.id);
-    this.game._lives = 5;
 
     // ── Update all checkpoint sprite tints ───────────────────────────────
     const levelCheckpoints = checkpointsByLevel[this.game._currentLevel] || [];
