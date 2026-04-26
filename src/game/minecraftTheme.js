@@ -298,7 +298,7 @@ export function drawThemedWalls(scene, walls) {
 export function createThemedPlayer(scene, x, y) {
   if (isThemeLoaded(scene)) {
     return scene.add.sprite(x, y, 'player')
-      .setDisplaySize(50, 50)
+      .setDisplaySize(64, 64)
       .setDepth(5);
   } else {
     return scene.add.rectangle(x, y, 20, 20, 0x4499ff);
@@ -463,6 +463,179 @@ export function updatePlayerRotation(player, facingAngle, themed, scene) {
   });
 }
 
+/**
+ * startWalkAnimation(player, facingAngle, themed, scene)
+ *
+ * WHAT: Starts a subtle walking oscillation on the player sprite —
+ *   a repeating side-to-side rock (±4°) combined with a small
+ *   vertical bob (±1.5px) — that plays continuously while the
+ *   player is moving forward.
+ *
+ * WHY two oscillations combined?
+ *   Rotation alone looks like the character is drunk, not walking.
+ *   Vertical bob alone looks like bouncing, not walking.
+ *   Together they create a "waddle" — the natural motion of a
+ *   Minecraft-style blocky character walking, viewed from above.
+ *
+ * HOW it handles facing angle:
+ *   The rock oscillates RELATIVE to the current facing direction.
+ *   If the player faces 90° (up), the Phaser angle is 0° (90 - 90).
+ *   The tween rocks between -4° and +4° around that base angle.
+ *   This works at any facing direction automatically because the
+ *   tween target is baseAngle ± offset, not an absolute value.
+ *
+ * HOW it loops:
+ *   yoyo: true makes the tween reverse after reaching the target.
+ *   repeat: -1 makes it loop forever (until manually stopped).
+ *   Together: the sprite rocks left → right → left → right... endlessly.
+ *
+ * PERFORMANCE:
+ *   Two tweens (rotation + position) running at 60fps is trivial for
+ *   Phaser's tween manager. Each tween is a single property interpolation
+ *   — no texture swaps, no draw call changes, no GPU impact.
+ *
+ * @param {Phaser.GameObjects.Sprite} player  The player game object.
+ * @param {number} facingAngle  The current game facing angle (0°=right, 90°=up).
+ * @param {boolean} themed  Whether the Minecraft theme is active.
+ * @param {Phaser.Scene} scene  The active scene (for scene.tweens.add).
+ */
+export function startWalkAnimation(player, facingAngle, themed, scene) {
+  if (!themed || !scene) return;
+
+  // Stop any existing walk animation first (prevents stacking).
+  stopWalkAnimation(player);
+
+  // WHAT: Also kill the smooth turn tween from updatePlayerRotation().
+  //
+  // WHY: updatePlayerRotation() creates a 200ms tween on player.angle
+  //   stored as player._rotationTween. If the kid clicks Turn then
+  //   Forward quickly (within 200ms), that tween is still running.
+  //   Our walk tween ALSO targets player.angle. Two tweens on the
+  //   same property = they fight each frame = wild jerky rotation.
+  //
+  // HOW: Stop and clear _rotationTween before we create _walkTweenRotation.
+  //   This guarantees only ONE tween controls angle at any time.
+  if (player._rotationTween) {
+    player._rotationTween.stop();
+    player._rotationTween = null;
+  }
+
+  // ── Base Phaser angle ─────────────────────────────────────────────────
+  //
+  // WHAT: The "neutral" angle the sprite should rest at when not oscillating.
+  // HOW: Same conversion as updatePlayerRotation: phaserAngle = 90 - facingAngle.
+  const baseAngle = 90 - facingAngle;
+
+  // ── Rotation rock (±4° oscillation) ───────────────────────────────────
+  //
+  // WHAT: Rocks the sprite between baseAngle-4 and baseAngle+4 degrees.
+  //
+  // WHY ±4°?
+  //   At 32×32 px, ±4° moves the sprite corners by ~2 pixels — visible
+  //   enough to read as motion, subtle enough to not look glitchy.
+  //   ±2° is too subtle (invisible at this scale).
+  //   ±8° is too much (looks like the character is falling over).
+  //
+  // TIMING: 150ms per half-cycle = 300ms full rock (left → right → left).
+  //   At MOVE_SPEED=300 px/s and a typical move of 50px (167ms duration),
+  //   the player sees about half a rock cycle per short move, or 2-3 full
+  //   cycles for a 200px move. This feels natural — not frantic, not slow.
+  //
+  // WHY start at baseAngle - 4 (not baseAngle)?
+  //   Starting from the offset means the first visible frame already shows
+  //   movement. Starting from baseAngle would mean the first 75ms looks
+  //   static (tweening toward the first offset) — a subtle delay that
+  //   makes the animation feel laggy.
+
+  // ±6° rotation — the sweet spot for a 40px sprite.
+  //   ±4° was invisible (rounded away by pixel-art filtering).
+  //   ±10° was too dramatic (looked like falling, not walking).
+  //   ±6° moves the sprite corners by ~4px — clearly visible as a
+  //   gentle waddle without looking broken.
+  player.setAngle(baseAngle - 6);
+
+  player._walkTweenRotation = scene.tweens.add({
+    targets: player,
+    angle: baseAngle + 6,       // 12° total swing
+    duration: 130,              // slightly relaxed pace
+    ease: 'Sine.easeInOut',
+    yoyo: true,
+    repeat: -1,
+  });
+
+  // ── Vertical bob (±1.5px oscillation) ─────────────────────────────────
+  //
+  // WHAT: Oscillates scaleX and scaleY slightly to create a "breathing"
+  //   or "bouncing" effect that simulates the weight shift of walking.
+  //
+  // WHY scale instead of y position?
+  //   The previous version tweened player.y directly. But Phaser's physics
+  //   engine ALSO sets player.y every frame based on velocity. The two
+  //   systems fought over the same property — the tween won, pinning the
+  //   player in place and preventing all forward movement.
+  //   Scale (scaleX, scaleY) is purely visual — physics never touches it.
+  //   So there's no conflict.
+  //
+  // HOW it looks:
+  //   The sprite slightly squishes horizontally and stretches vertically,
+  //   then reverses. Combined with the rotation rock, it creates a
+  //   convincing "waddle" at the Minecraft pixel-art scale.
+  //
+  // WHY store original scales?
+  //   setDisplaySize changes scaleX/scaleY internally. We need to restore
+  //   the exact values when the animation stops, not assume they're 1.0.
+  
+  // NOTE: No squash-stretch (scaleX/scaleY) tween.
+  //
+  // WHY it was removed:
+  //   Oscillating scaleY interferes with Arcade Physics body bounds
+  //   during downward movement. The body size fluctuates every frame,
+  //   causing jittery collision resolution that makes the sprite bounce
+  //   chaotically when moving in the +Y direction.
+  //
+  //   Left/right/up movement looked fine because the scale oscillation
+  //   was perpendicular to travel (left/right) or dampened symmetrically (up).
+  //   But downward movement amplified the jitter.
+  //
+  // The ±6° rotation rock alone is sufficient for a convincing walk
+  // animation at this sprite scale. No scale changes needed.
+}
+
+
+/**
+ * stopWalkAnimation(player)
+ *
+ * WHAT: Stops the walking oscillation and returns the sprite to its
+ *   neutral position — no tilt, original Y position.
+ *
+ * WHY not just let the tween finish naturally?
+ *   Tweens with repeat: -1 loop forever. They must be explicitly stopped.
+ *   Also, the tween might be stopped mid-cycle (e.g., player hits a wall
+ *   at the peak of a rock). Without resetting, the sprite would freeze
+ *   at a tilted angle — looking broken.
+ *
+ * HOW it cleans up:
+ *   1. Stop both tweens (rotation and bob).
+ *   2. Restore Y to the stored original value.
+ *   3. Do NOT reset angle here — the caller (goForward callback or
+ *      _onWallHit) will call setPreviewAngle() which resets the angle
+ *      via updatePlayerRotation(). Setting it here too would cause a
+ *      visible double-snap.
+ *
+ * @param {Phaser.GameObjects.Sprite} player  The player game object.
+ */
+export function stopWalkAnimation(player) {
+  // Stop rotation tween
+  if (player._walkTweenRotation) {
+    player._walkTweenRotation.stop();
+    player._walkTweenRotation = null;
+  }
+
+  // No squash-stretch tween to stop — it was removed because it
+  // interfered with physics during downward movement.
+  // Only the rotation tween (stopped above) needs cleanup.
+  
+}
 
 /**
  * flashPlayerCrash(player, themed)
@@ -479,11 +652,9 @@ export function updatePlayerRotation(player, facingAngle, themed, scene) {
  * @param {Phaser.GameObjects.Sprite|Phaser.GameObjects.Rectangle} player
  * @param {boolean} themed
  */
-export function flashPlayerCrash(player, themed) {
-  if (themed && player.setTint) {
-    player.setTint(0xff4444);
-  } else if (player.setFillStyle) {
-    player.setFillStyle(0xff4444);
+export function flashPlayerCrash(playerSprite, themed) {
+  if (themed && playerSprite?.setTint) {
+    playerSprite.setTint(0xff4444);
   }
 }
 

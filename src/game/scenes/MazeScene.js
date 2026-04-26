@@ -30,6 +30,7 @@ import {
   createThemedPlayer, createThemedExit, createThemedStart,
   placeThemedEnemies,
   updatePlayerRotation, flashPlayerCrash, getTrailStyle,
+  startWalkAnimation, stopWalkAnimation,
 } from '../minecraftTheme.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -519,22 +520,40 @@ export default class MazeScene extends Phaser.Scene {
     //   before the player means trail lines will appear underneath the player
     //   square, so the player is always readable on top of its own path.
     this.trailGfx = this.add.graphics();
+    this.trailGfx.setDepth(0);
 
 
     // ── 8. Player (dynamic physics body) ─────────────────────────────────────
     //
-    // WHAT: A small blue square that the player controls.
+    // ═══════════════════════════════════════════════════════════════════════
+    // PLAYER — split into physics body (invisible) + visual sprite
     //
-    // HOW dynamic bodies differ from static ones:
-    //   • Static bodies  → baked in at creation, never move, zero per-frame cost.
-    //                       Used for: walls, exit zone, any fixed obstacle.
-    //   • Dynamic bodies → updated every frame: velocity, gravity, acceleration
-    //                       are all recalculated. Can be pushed by collisions.
-    //                       Used for: the player (and eventually enemies, bullets).
+    // WHY two objects?
+    //   Previously, the player was a single sprite with a physics body
+    //   attached. Any tween on the sprite's angle/scale affected the
+    //   physics body's collision calculations, causing jitter — especially
+    //   when moving downward (+Y direction).
     //
-    // The player starts at (60, 60) — the centre of the start zone above.
-    // WHAT: Create the player at this level's start position.
-    this.player = createThemedPlayer(this, cfg.startX, cfg.startY);
+    //   By separating them:
+    //     this.player       = invisible rectangle → physics ONLY
+    //     this.playerSprite = visible sprite      → visuals ONLY
+    //
+    //   Physics never sees rotation tweens. Tweens never see collision.
+    //   The sprite follows the body via update() every frame.
+    //
+    // HOW they stay in sync:
+    //   In update(): playerSprite.x = player.x; playerSprite.y = player.y;
+    //   This is a one-way sync: physics body is the source of truth,
+    //   sprite just mirrors its position for rendering.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // The invisible physics body — handles movement and collision.
+    // 20×20 matches the original collision size.
+    this.player = this.add.rectangle(cfg.startX, cfg.startY, 20, 20);
+    this.player.setVisible(false);
+
+    // The visible character sprite — handles rendering and animation.
+    this.playerSprite = createThemedPlayer(this, cfg.startX, cfg.startY);
 
     // WHAT: Place enemy mob sprites at key positions (themed only).
     // WHY: Visual decoration — the actual collision comes from the wall
@@ -602,6 +621,7 @@ export default class MazeScene extends Phaser.Scene {
     //   This produces a compact equilateral-ish triangle that fits comfortably
     //   inside the player's 10 px half-width (20 px total side length).
     this.playerIndicatorGfx = this.add.graphics();
+    this.playerIndicatorGfx.setDepth(6);
 
 
     // ── 9. Direction preview arrow (renders above indicator) ──────────────────
@@ -622,6 +642,7 @@ export default class MazeScene extends Phaser.Scene {
     //   This is the standard Phaser idiom for dynamic vector graphics that
     //   change shape or position on every update.
     this.arrowGfx = this.add.graphics();
+    this.arrowGfx.setDepth(6);
 
 
     // ── 9b. Compass needle (highest z-layer — always readable) ────────────────
@@ -790,7 +811,7 @@ export default class MazeScene extends Phaser.Scene {
       fontSize: '13px',
       color: '#667788',
       fontFamily: 'monospace',
-    });
+    }).setDepth(30);
 
     // WHAT: `physics.add.overlap(A, B, callback)` calls `callback` each frame
     //   that A and B's bounding boxes intersect — without any physical push.
@@ -820,7 +841,7 @@ export default class MazeScene extends Phaser.Scene {
         fontFamily: 'monospace',
         backgroundColor: '#00000099',
         padding: { x: 24, y: 12 },
-      }).setOrigin(0.5);
+      }).setOrigin(0.5).setDepth(30);
 
       // WHAT: Notify React that this level was completed.
       // WHY: React updates the GameContext (marks level done, unlocks next)
@@ -923,7 +944,7 @@ export default class MazeScene extends Phaser.Scene {
       fontSize: '13px',
       color: '#aaaaaa',
       fontFamily: 'monospace',
-    }).setOrigin(1, 0);
+    }).setOrigin(1, 0).setDepth(30);
 
 
     // ── 12. Initial direction preview ──────────────────────────────────────────
@@ -946,9 +967,19 @@ export default class MazeScene extends Phaser.Scene {
    */
   // eslint-disable-next-line no-unused-vars
   update(time, delta) {
-    // Refresh the coordinate readout every frame.
-    // Math.round() converts the sub-pixel float position (e.g. 59.9998) to a
-    // clean integer so the display stays readable and doesn't flicker.
+    // WHAT: Sync the visual sprite to the physics body's position.
+    // WHY: The physics body (this.player) is invisible and controls movement.
+    //   The sprite (this.playerSprite) is visible and controls rendering.
+    //   Without this sync, the sprite would stay at the start position
+    //   while the invisible body moves through the maze.
+    // HOW: One-way copy every frame. Physics body is the source of truth.
+    //   We do NOT sync angle — the sprite's angle is controlled by tweens
+    //   (walk animation, turn animation), not by physics.
+    if (this.playerSprite) {
+      this.playerSprite.x = this.player.x;
+      this.playerSprite.y = this.player.y;
+    }
+
     const px = Math.round(this.player.x);
     const py = Math.round(this.player.y);
     this.coordText.setText(`x: ${px}  y: ${py}`);
@@ -1021,10 +1052,40 @@ export default class MazeScene extends Phaser.Scene {
     //   dx =  cos(45°) ≈ +0.707  →  vx ≈ +212 px/s  (right)
     //   dy = −sin(45°) ≈ −0.707  →  vy ≈ −212 px/s  (up)
     //   Combined speed = √(212² + 212²) ≈ 300 px/s = MOVE_SPEED  ✓
-    const dx =  Math.cos(angleRad);
-    const dy = -Math.sin(angleRad); // negated for Phaser Y-down
+    let dx =  Math.cos(angleRad);
+    let dy = -Math.sin(angleRad); // negated for Phaser Y-down
 
-    // Apply velocity. (dx, dy) is a unit vector so × MOVE_SPEED = correct speed.
+    // WHAT: Clamp near-zero values to exactly zero.
+    //
+    // WHY: JavaScript's floating-point math produces tiny errors:
+    //   cos(270°) = 6.12e-17 instead of 0
+    //   sin(180°) = 1.22e-16 instead of 0
+    //
+    //   These near-zero values create a minuscule velocity on the
+    //   "wrong" axis. For example, facing straight down (270°):
+    //     Intended: vx=0, vy=300
+    //     Actual:   vx=0.00000002, vy=300
+    //
+    //   That tiny vx pushes the player into vertical wall edges.
+    //   Physics corrects the overlap by pushing back. Next frame
+    //   it drifts again. Push back again. → visible jitter.
+    //
+    // HOW: If |dx| or |dy| is smaller than EPSILON (1e-10), snap to 0.
+    //   This threshold is small enough to never affect real diagonal
+    //   movement (cos(45°) = 0.707 — far above 1e-10) but catches
+    //   all floating-point ghosts near cardinal directions.
+    //
+    // WHICH ANGLES ARE AFFECTED:
+    //   0°   (right): cos=1 ✓, sin=0 (has error) → dy clamped
+    //   90°  (up):    cos=0 (has error), sin=1 ✓ → dx clamped
+    //   180° (left):  cos=-1 ✓, sin=0 (has error) → dy clamped
+    //   270° (down):  cos=0 (has error), sin=-1 ✓ → dx clamped
+    //   45°, 60° etc: both components are large → no clamping → correct
+    const EPSILON = 1e-10;
+    if (Math.abs(dx) < EPSILON) dx = 0;
+    if (Math.abs(dy) < EPSILON) dy = 0;
+
+    // Apply velocity.
     this.player.body.setVelocity(dx * MOVE_SPEED, dy * MOVE_SPEED);
     this.isMoving = true;
 
@@ -1033,6 +1094,10 @@ export default class MazeScene extends Phaser.Scene {
     // Both are restored in the delayedCall callback below.
     this.arrowGfx.clear();
     this.playerIndicatorGfx.clear();
+    // WHAT: Start the walking waddle animation.
+    // WHY: Visual feedback that the player is in motion — the sprite rocks
+    //   and bobs while sliding forward, making it look alive.
+    startWalkAnimation(this.playerSprite, this.facingAngle, this._themed, this);
 
     // ── Schedule the stop ─────────────────────────────────────────────────────
     //
@@ -1051,6 +1116,27 @@ export default class MazeScene extends Phaser.Scene {
       this._moveTimer = null; // timer has fired — nothing to cancel anymore
       this.player.body.setVelocity(0, 0);
       this.isMoving = false;
+      // WHAT: Snap player position to whole pixels after movement ends.
+      //
+      // WHY: Even with the EPSILON clamp above, accumulated floating-point
+      //   drift over many frames can leave the player at sub-pixel positions
+      //   like (200.0000003, 340.9999997). These sub-pixel positions can
+      //   cause the player to be "inside" a wall boundary by a fraction
+      //   of a pixel, triggering an unwanted collision on the next move.
+      //
+      // HOW: Math.round() snaps to the nearest integer pixel.
+      //   This is safe because the maze grid and wall positions are all
+      //   defined at integer coordinates.
+      this.player.x = Math.round(this.player.x);
+      this.player.y = Math.round(this.player.y);
+      this.player.body.reset(this.player.x, this.player.y);
+      // WHAT: Stop the walking animation and return to neutral pose.
+      // WHY: The player has stopped moving — continuing the waddle would
+      //   look wrong for a stationary character.
+      // HOW: Stops both tweens and restores the original Y position.
+      //   The angle is restored by setPreviewAngle() below, which calls
+      //   updatePlayerRotation() to set the correct static facing angle.
+      stopWalkAnimation(this.playerSprite);
 
       // Draw a permanent trail segment: start → where the player actually landed.
       // (May be shorter than `distance` if a wall stopped the player early.)
@@ -1178,6 +1264,11 @@ export default class MazeScene extends Phaser.Scene {
     this._moveTimer = null;
     this.isMoving = false;
 
+    // WHAT: Stop walking animation on crash.
+    // WHY: The player hit a wall — the waddle should stop instantly,
+    //   not continue rocking while the "Oops!" message shows.
+    stopWalkAnimation(this.playerSprite);
+
     // ── Camera shake (both paths) ───────────────────────────────────────
     this.cameras.main.shake(250, 0.007);
 
@@ -1196,22 +1287,20 @@ export default class MazeScene extends Phaser.Scene {
       this.game._onLivesChanged?.(this.game._lives, null);
 
       // Flash player red briefly
-      if (this.player.setTint) {
-        this.player.setTint(0xff4444);
-      } else if (this.player.setFillStyle) {
-        this.player.setFillStyle(0xff4444);
+      if (this.playerSprite?.setTint) {
+        this.playerSprite.setTint(0xff4444);
       }
 
       // ── Show "Oops!" with lives count ─────────────────────────────────
-      const heartsStr = '♥'.repeat(this.game._lives) + '♡'.repeat(5 - this.game._lives);
+      const heartsStr = '❤️'.repeat(this.game._lives) + '🖤'.repeat(5 - this.game._lives);
       const oopsMsg = this.add.text(400, 280, `Oops!  ${heartsStr}`, {
         fontSize: '28px',
         fontStyle: 'bold',
-        color: '#ff8844',
+        color: '#d5d209',
         fontFamily: 'monospace',
         backgroundColor: '#000000bb',
         padding: { x: 16, y: 10 },
-      }).setOrigin(0.5).setDepth(20);
+      }).setOrigin(0.5).setDepth(30);
 
       // ── Determine respawn position ──────────────────────────────────────
       const cfg = LEVEL_CONFIG[this.game._currentLevel] || LEVEL_CONFIG[1];
@@ -1225,12 +1314,14 @@ export default class MazeScene extends Phaser.Scene {
         // Move player to respawn point
         this.player.setPosition(respawn.x, respawn.y);
         this.player.body.reset(respawn.x, respawn.y);
+        // Also move the sprite immediately (don't wait for next update frame)
+        if (this.playerSprite) {
+          this.playerSprite.setPosition(respawn.x, respawn.y);
+        }
 
         // Clear the red flash
-        if (this.player.clearTint) {
-          this.player.clearTint();
-        } else if (this.player.setFillStyle) {
-          this.player.setFillStyle(0x4499ff);
+        if (this.playerSprite?.clearTint) {
+          this.playerSprite.clearTint();
         }
 
         // Remove the Oops message
@@ -1271,10 +1362,8 @@ export default class MazeScene extends Phaser.Scene {
       this.game._onLivesChanged?.(0, null);
 
       // Flash player red
-      if (this.player.setTint) {
-        this.player.setTint(0xff4444);
-      } else if (this.player.setFillStyle) {
-        this.player.setFillStyle(0xff4444);
+      if (this.playerSprite?.setTint) {
+        this.playerSprite.setTint(0xff4444);
       }
 
       // Disable physics — no more movement or collisions possible.
@@ -1286,29 +1375,29 @@ export default class MazeScene extends Phaser.Scene {
 
       // ── Show Game Over messages ───────────────────────────────────────
       this.add.text(400, 240, 'GAME OVER', {
-        fontSize: '48px',
+        fontSize: '50px',
         fontStyle: 'bold',
-        color: '#ff4444',
+        color: '#fbff00',
         fontFamily: 'monospace',
         backgroundColor: '#000000cc',
         padding: { x: 28, y: 16 },
-      }).setOrigin(0.5).setDepth(20);
+      }).setOrigin(0.5).setDepth(30);
 
       this.add.text(400, 320, 'All 5 lives used!', {
         fontSize: '22px',
-        color: '#ff8866',
+        color: '#fbff00',
         fontFamily: 'monospace',
         backgroundColor: '#000000bb',
         padding: { x: 16, y: 8 },
-      }).setOrigin(0.5).setDepth(20);
+      }).setOrigin(0.5).setDepth(30);
 
       this.add.text(400, 375, 'Click "Start Over" to try again', {
-        fontSize: '15px',
-        color: '#aa9988',
+        fontSize: '19px',
+        color: '#fbff00',
         fontFamily: 'monospace',
         backgroundColor: '#000000bb',
         padding: { x: 12, y: 6 },
-      }).setOrigin(0.5).setDepth(20);
+      }).setOrigin(0.5).setDepth(30);
 
       // ── NO automatic restart ──────────────────────────────────────────
       // The scene stays frozen on the Game Over screen.
@@ -1459,7 +1548,7 @@ export default class MazeScene extends Phaser.Scene {
       fontFamily: 'monospace',
       backgroundColor: '#00000088',
       padding: { x: 10, y: 6 },
-    }).setOrigin(0.5).setDepth(20);
+    }).setOrigin(0.5).setDepth(30);
 
     // Fade out and destroy after 1.5 seconds
     this.tweens.add({
@@ -1509,8 +1598,8 @@ export default class MazeScene extends Phaser.Scene {
 
     // WHAT: Smoothly rotate the player sprite to the new facing direction.
     // WHY: Pass `this` (the scene) so the function can create a Phaser tween.
-    updatePlayerRotation(this.player, angleDeg, this._themed, this);
-    
+    updatePlayerRotation(this.playerSprite, angleDeg, this._themed, this);
+
     // Convert to radians once — all three draws below use the same rad value.
     // Example: angleDeg = 45°  →  rad ≈ 0.785
     //   cos(0.785) ≈ 0.707   (X component, points right)
