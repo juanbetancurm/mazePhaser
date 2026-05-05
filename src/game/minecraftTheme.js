@@ -368,6 +368,14 @@ export function placeThemedEnemies(scene, positions) {
   });
 }
 
+function getSpriteBaseAngle(facingAngle) {
+  const angle = 90 - facingAngle;
+
+  // `-180` and `180` are visually identical, but Phaser angle tweens behave
+  // much more predictably when we stay away from the wrap boundary at -180.
+  return angle === -180 ? 180 : angle;
+}
+
 
 /**
  * updatePlayerRotation(player, facingAngle, themed, scene)
@@ -412,7 +420,7 @@ export function updatePlayerRotation(player, facingAngle, themed, scene) {
   //   Game:   0°=right, 90°=up, CCW positive (math convention)
   //   Phaser: 0°=right, 90°=down, CW positive (screen convention)
   //   If the player sprite faces UP in the PNG: phaserTarget = 90 - facingAngle
-  const targetAngle = 90 - facingAngle;
+  const targetAngle = getSpriteBaseAngle(facingAngle);
 
   // WHAT: Calculate the shortest rotation path.
   //
@@ -524,7 +532,7 @@ export function startWalkAnimation(player, facingAngle, themed, scene) {
   //
   // WHAT: The "neutral" angle the sprite should rest at when not oscillating.
   // HOW: Same conversion as updatePlayerRotation: phaserAngle = 90 - facingAngle.
-  const baseAngle = 90 - facingAngle;
+  const baseAngle = getSpriteBaseAngle(facingAngle);
 
   // ── Rotation rock (±4° oscillation) ───────────────────────────────────
   //
@@ -624,11 +632,22 @@ export function startWalkAnimation(player, facingAngle, themed, scene) {
  *
  * @param {Phaser.GameObjects.Sprite} player  The player game object.
  */
-export function stopWalkAnimation(player) {
+export function stopWalkAnimation(player, facingAngle, themed) {
   // Stop rotation tween
   if (player._walkTweenRotation) {
     player._walkTweenRotation.stop();
     player._walkTweenRotation = null;
+  }
+
+  // Also stop any smooth-turn tween so nothing keeps nudging the sprite
+  // after we restore its neutral facing.
+  if (player._rotationTween) {
+    player._rotationTween.stop();
+    player._rotationTween = null;
+  }
+
+  if (themed && typeof facingAngle === 'number' && player?.setAngle) {
+    player.setAngle(getSpriteBaseAngle(facingAngle));
   }
 
   // No squash-stretch tween to stop — it was removed because it

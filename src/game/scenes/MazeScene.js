@@ -1136,7 +1136,7 @@ export default class MazeScene extends Phaser.Scene {
       // HOW: Stops both tweens and restores the original Y position.
       //   The angle is restored by setPreviewAngle() below, which calls
       //   updatePlayerRotation() to set the correct static facing angle.
-      stopWalkAnimation(this.playerSprite);
+      stopWalkAnimation(this.playerSprite, this.facingAngle, this._themed);
 
       // Draw a permanent trail segment: start → where the player actually landed.
       // (May be shorter than `distance` if a wall stopped the player early.)
@@ -1267,7 +1267,7 @@ export default class MazeScene extends Phaser.Scene {
     // WHAT: Stop walking animation on crash.
     // WHY: The player hit a wall — the waddle should stop instantly,
     //   not continue rocking while the "Oops!" message shows.
-    stopWalkAnimation(this.playerSprite);
+    stopWalkAnimation(this.playerSprite, this.facingAngle, this._themed);
 
     // ── Camera shake (both paths) ───────────────────────────────────────
     this.cameras.main.shake(250, 0.007);
